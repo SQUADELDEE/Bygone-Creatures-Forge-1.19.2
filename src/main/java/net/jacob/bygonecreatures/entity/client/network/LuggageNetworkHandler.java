@@ -19,6 +19,9 @@ public class LuggageNetworkHandler {
         int id = 0;
 
         CHANNEL.registerMessage(id++, OpenLuggageScreenPacket.class, OpenLuggageScreenPacket::encode, OpenLuggageScreenPacket::new, OpenLuggageScreenPacket.Handler::onMessage);
+        CHANNEL.registerMessage(id++, BearRoarShakePacket.class, BearRoarShakePacket::encode, BearRoarShakePacket::new, BearRoarShakePacket.Handler::onMessage);
+        CHANNEL.registerMessage(id++, ArgenDivePacket.class, ArgenDivePacket::encode, ArgenDivePacket::new, ArgenDivePacket.Handler::onMessage);
+        CHANNEL.registerMessage(id++, BearAbilityPacket.class, BearAbilityPacket::encode, BearAbilityPacket::new, BearAbilityPacket.Handler::onMessage);
 
     }
 }

@@ -1,4 +1,8 @@
 {
+  "key.bygonecreatures.dive_attack": "Argentavis Dive",
+  "key.bygonecreatures.bear_roar": "Bear Roar",
+  "key.bygonecreatures.bear_charge": "Bear Charge",
+  "key.bygonecreatures.bear_pound": "Bear Pound",
   "item.bygonecreatures.dung": "Dung",
   "item.bygonecreatures.dodoegg": "Dodo Egg",
   "item.bygonecreatures.dodomeat": "Raw Dodo Meat",
@@ -29,6 +33,7 @@
   "block.bygonecreatures.sleekstone": "Sleekstone",
   "item.bygonecreatures.wheatonastick": "Wheat on a Stick",
   "block.bygonecreatures.dodoeggcrate": "Dodo Egg Crate",
+  "block.bygonecreatures.terrorbirdegg": "Terror Bird Egg",
   "block.bygonecreatures.desertscrub": "Desert Scrub",
   "block.bygonecreatures.sleekstonepebble": "Sleekstone Pebble",
   "block.bygonecreatures.kingsago": "King Sago",

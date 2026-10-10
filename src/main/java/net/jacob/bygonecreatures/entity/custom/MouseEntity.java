@@ -32,35 +32,34 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
-import net.minecraft.world.level.material.Material;
-import net.minecraft.world.level.storage.loot.LootContext;
+import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.level.storage.loot.LootTable;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParamSets;
 import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import net.minecraft.world.scores.Team;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nullable;
 import java.util.List;
 import java.util.function.Predicate;
 
-public class MouseEntity extends TamableAnimal implements IAnimatable {
+public class MouseEntity extends TamableAnimal implements GeoEntity {
     public float prevDigProgress;
     public float digProgress;
 
     public static final ResourceLocation MOUSE_REWARD = new ResourceLocation("bygonecreatures", "gacha/mouse_reward");
 
     private static List<ItemStack> getItemStacks(MouseEntity platypus) {
-        LootTable loottable = platypus.level.getServer().getLootTables().get(MOUSE_REWARD);
-        return loottable.getRandomItems((new LootContext.Builder((ServerLevel) platypus.level)).withParameter(LootContextParams.THIS_ENTITY, platypus).withRandom(platypus.level.random).create(LootContextParamSets.PIGLIN_BARTER));
+        LootTable loottable = platypus.level().getServer().getLootData().getLootTable(MOUSE_REWARD);
+        LootParams lootparams = (new LootParams.Builder((ServerLevel) platypus.level())).withParameter(LootContextParams.THIS_ENTITY, platypus).create(LootContextParamSets.PIGLIN_BARTER);
+        return loottable.getRandomItems(lootparams);
     }
     private static final EntityDataAccessor<Integer> ATTACK_TICK = SynchedEntityData.defineId(MouseEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Boolean> DIGGING = SynchedEntityData.defineId(MouseEntity.class, EntityDataSerializers.BOOLEAN);
@@ -71,7 +70,7 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
         EntityType<?> entitytype = p_30437_.getType();
         return entitytype == EntityType.CHICKEN || entitytype == EntityType.RABBIT || entitytype == EntityType.PIG;
     };
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
 
     private static final EntityDataAccessor<Boolean> SITTING =
             SynchedEntityData.defineId(MouseEntity.class, EntityDataSerializers.BOOLEAN);
@@ -106,7 +105,7 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
         super.aiStep();
 
 
-        if (!this.level.isClientSide && this.isAlive() && !this.isBaby() && --this.geggTime <= 0 && this.isTame() && this.isDigging()) {
+        if (!this.level().isClientSide && this.isAlive() && !this.isBaby() && --this.geggTime <= 0 && this.isTame() && this.isDigging()) {
             List<ItemStack> lootList = getItemStacks(this);
             this.playSound(SoundEvents.CHICKEN_EGG, 1.0F, (this.random.nextFloat() - this.random.nextFloat()) * 0.2F + 1.0F);
 //            this.spawnAtLocation(DUNG.get());
@@ -178,7 +177,7 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
     @Nullable
     @Override
     public AgeableMob getBreedOffspring(ServerLevel serverLevel, AgeableMob mob) {
-        return ModEntityTypes.MOUSE.get().create(level);
+        return ModEntityTypes.MOUSE.get().create(level());
     }
 
 
@@ -186,7 +185,7 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
     public void tick() {
         super.tick();
 
-        if (!this.level.isClientSide()) {
+        if (!this.level().isClientSide()) {
             if (this.getAttackTick() > 0) this.getEntityData().set(ATTACK_TICK, this.getAttackTick() - 1);
 
 
@@ -194,12 +193,12 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
 
         if (this.getAttackTick() > 0){
             spawnGroundEffects();
-            level.playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.ROOTED_DIRT_FALL, SoundSource.NEUTRAL, 0.5F, 0.8F);
+            level().playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.ROOTED_DIRT_FALL, SoundSource.NEUTRAL, 0.5F, 0.8F);
         }
 
 
 
-//        if (this.onGround && isDigging()) {
+//        if (this.onGround() && isDigging()) {
 //            spawnGroundEffects();
 //        }
         prevDigProgress = digProgress;
@@ -224,10 +223,10 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
             double extraY = 0.8F;
             double extraZ = radius * Mth.cos(angle);
             BlockPos ground = this.getBlockPosBelowThatAffectsMyMovement();
-            BlockState BlockState = this.level.getBlockState(ground);
-            if (BlockState.getMaterial() != Material.AIR && BlockState.getMaterial() != Material.WATER) {
-                if (level.isClientSide) {
-                    level.addParticle(new BlockParticleOption(ParticleTypes.BLOCK, BlockState), true, this.getX() + extraX, ground.getY() + extraY, this.getZ() + extraZ, motionX, motionY, motionZ);
+            BlockState BlockState = this.level().getBlockState(ground);
+            if (!BlockState.isAir() && !BlockState.liquid()) {
+                if (level().isClientSide) {
+                    level().addParticle(new BlockParticleOption(ParticleTypes.BLOCK, BlockState), true, this.getX() + extraX, ground.getY() + extraY, this.getZ() + extraZ, motionX, motionY, motionZ);
                 }
             }
         }
@@ -239,26 +238,26 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
 
     public void startAttackAnim() {
         this.getEntityData().set(ATTACK_TICK, 20);
-        level.playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.ROOTED_DIRT_FALL, SoundSource.NEUTRAL, 0.8F, 1.5F);
+        level().playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.ROOTED_DIRT_FALL, SoundSource.NEUTRAL, 0.8F, 1.5F);
     }
 
 
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && !(this.getAttackTick() > 0) && !(this.isSitting()) && !(this.isTame())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("run", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<MouseEntity> state) {
+        if (state.isMoving() && !(this.getAttackTick() > 0) && !(this.isSitting()) && !(this.isTame())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("run"));
             return PlayState.CONTINUE;
         }
 
-        if (event.isMoving() && !(this.getAttackTick() > 0) && this.isTame() && !(this.isSitting())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("run", ILoopType.EDefaultLoopTypes.LOOP));
+        if (state.isMoving() && !(this.getAttackTick() > 0) && this.isTame() && !(this.isSitting())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("run"));
             return PlayState.CONTINUE;
         }
 
         if (this.getAttackTick() > 0){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("dig", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("dig"));
             return PlayState.CONTINUE;
         }
 
@@ -268,19 +267,19 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
 
 
         if (this.isSitting()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("sit", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("sit"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
 
     }
@@ -291,7 +290,7 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
 
 
     @Override
-    public AnimationFactory getFactory() {
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
         return this.factory;
     }
 
@@ -366,15 +365,15 @@ public class MouseEntity extends TamableAnimal implements IAnimatable {
             meatFeedings++;
             if (meatFeedings > 9) {
                 this.tame(player);
-                this.level.broadcastEntityEvent(this, (byte) 7);
+                this.level().broadcastEntityEvent(this, (byte) 7);
             } else {
-                this.level.broadcastEntityEvent(this, (byte) 6);
+                this.level().broadcastEntityEvent(this, (byte) 6);
             }
             return InteractionResult.SUCCESS;
         }
 
 
-        if(isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND) {
+        if(isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND) {
             setSitting(!isSitting());
             return InteractionResult.SUCCESS;
 

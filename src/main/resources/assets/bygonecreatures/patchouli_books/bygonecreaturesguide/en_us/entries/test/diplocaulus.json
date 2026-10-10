@@ -4,18 +4,16 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/ds.png"],
-      "title": "Diplocaulus"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:diplocaulus{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Diplocaulus",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:spotlight",
       "item": "bygonecreatures:diploslime",
       "text": "This arrow headed amphibian can be found in swamp areas, spawning fairly rarely in groups. They can travel both land and water and are efficient swimmers, but they can also be bucketed for transport. They can be fed grubs to breed, but feeding them grubs will also encourage them to shed 2 diplocaulus slimeballs, a throwable item that will significantly slow down mobs for a short time period. This item may also be used in some recipes."
-
-
     }
   ]
 }

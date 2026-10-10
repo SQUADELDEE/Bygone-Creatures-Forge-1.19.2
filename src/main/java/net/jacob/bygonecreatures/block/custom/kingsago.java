@@ -10,7 +10,6 @@ import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
-import net.minecraft.world.level.material.Material;
 import net.minecraft.world.phys.shapes.BooleanOp;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -45,14 +44,13 @@ public class kingsago extends Block implements IPlantable {
 
         for(Direction direction : Direction.Plane.HORIZONTAL) {
             BlockState blockstate = level.getBlockState(pos.relative(direction));
-            Material material = blockstate.getMaterial();
-            if (material.isSolid() || level.getFluidState(pos.relative(direction)).is(FluidTags.LAVA)) {
+            if (blockstate.isSolid() || level.getFluidState(pos.relative(direction)).is(FluidTags.LAVA)) {
                 return false;
             }
         }
 
         BlockState blockstate1 = level.getBlockState(pos.below());
-        return blockstate1.canSustainPlant(level, pos, Direction.UP, this) && !level.getBlockState(pos.above()).getMaterial().isLiquid();
+        return blockstate1.canSustainPlant(level, pos, Direction.UP, this) && !level.getBlockState(pos.above()).liquid();
 //        return super.canSurvive(p_60525_, p_60526_, p_60527_);
     }
 

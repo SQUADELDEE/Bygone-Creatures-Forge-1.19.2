@@ -5,12 +5,13 @@ import net.jacob.bygonecreatures.entity.custom.DodoEntity;
 import net.jacob.bygonecreatures.entity.custom.GlyptodonEntity;
 import net.jacob.bygonecreatures.entity.custom.RaptorEntity;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.processor.IBone;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
-import software.bernie.geckolib3.model.provider.data.EntityModelData;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.constant.DataTickets;
+import software.bernie.geckolib.model.data.EntityModelData;
+import software.bernie.geckolib.cache.object.GeoBone;
+import software.bernie.geckolib.model.GeoModel;
 
-public class RaptorModel extends AnimatedGeoModel<RaptorEntity> {
+public class RaptorModel extends GeoModel<RaptorEntity> {
 
 
 
@@ -21,7 +22,7 @@ public class RaptorModel extends AnimatedGeoModel<RaptorEntity> {
 
     @Override
     public ResourceLocation getTextureResource(RaptorEntity object) {
-        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/raptorentity/raptortexture.png");
+        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/raptorentity/repairrapttexture.png");
     }
 
     @Override
@@ -29,15 +30,13 @@ public class RaptorModel extends AnimatedGeoModel<RaptorEntity> {
         return new ResourceLocation(BygoneCreatures.MOD_ID, "animations/smallraptor.animation.json");
     }
 
-    @Override
-    public void setLivingAnimations(RaptorEntity entity, Integer uniqueID, AnimationEvent customPredicate) {
-        super.setCustomAnimations(entity, uniqueID, customPredicate);
-        IBone head_rotation = this.getAnimationProcessor().getBone("head");
-
-        EntityModelData extraData = (EntityModelData) customPredicate.getExtraDataOfType(EntityModelData.class).get(0);
-
-        head_rotation.setRotationX(extraData.headPitch * ((float) Math.PI / 180F));
-        head_rotation.setRotationY(extraData.netHeadYaw * ((float) Math.PI / 180F));
-
-    }
+//    @Override
+//    public void setCustomAnimations(RaptorEntity entity, long instanceId, AnimationState<RaptorEntity> animationState) {
+//        super.setCustomAnimations(entity, instanceId, animationState);
+//        EntityModelData entityData = animationState.getData(DataTickets.ENTITY_MODEL_DATA);
+//        getBone("head").ifPresent(head_rotation -> {
+//            head_rotation.setRotX(entityData.headPitch() * ((float) Math.PI / 180F));
+//            head_rotation.setRotY(entityData.netHeadYaw() * ((float) Math.PI / 180F));
+//        });
+//    }
 }

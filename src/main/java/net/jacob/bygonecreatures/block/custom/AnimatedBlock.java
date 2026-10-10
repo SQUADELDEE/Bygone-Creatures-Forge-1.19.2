@@ -2,7 +2,6 @@ package net.jacob.bygonecreatures.block.custom;
 
 import net.jacob.bygonecreatures.block.entity.ModBlockEntities;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.npc.Villager;
@@ -25,7 +24,7 @@ public class AnimatedBlock extends BaseEntityBlock {
 
     public void stepOn(Level level, BlockPos pos, BlockState blockState, Entity entity) {
         if (entity instanceof LivingEntity && !entity.isSteppingCarefully() && !(entity instanceof Player) && !(entity instanceof Villager)&& !EnchantmentHelper.hasFrostWalker((LivingEntity)entity)) {
-            entity.hurt(DamageSource.HOT_FLOOR, 2.5F);
+            entity.hurt(level.damageSources().hotFloor(), 2.5F);
             entity.makeStuckInBlock(blockState, new Vec3(0.25D, (double)0.05F, 0.25D));
         }
 

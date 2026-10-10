@@ -33,22 +33,21 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.predicate.BlockStatePredicate;
 import net.minecraft.world.level.gameevent.GameEvent;
 import org.jetbrains.annotations.Nullable;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.EnumSet;
 import java.util.function.Predicate;
 
 import static net.jacob.bygonecreatures.item.ModItems.*;
 
-public class ProtoceratopsEntity extends Animal implements IAnimatable {
+public class ProtoceratopsEntity extends Animal implements GeoEntity {
 
     private static final EntityDataAccessor<Boolean> SLEEPING = SynchedEntityData.defineId(ProtoceratopsEntity.class, EntityDataSerializers.BOOLEAN);
 
@@ -73,7 +72,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
     }
 
     public int eggTime = this.random.nextInt(6000) + 6000;
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
     private net.minecraft.world.entity.AgeableMob AgeableMob;
 
     public ProtoceratopsEntity(EntityType<? extends Animal> entityType, Level level) {
@@ -121,7 +120,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
     @Override
     public net.minecraft.world.entity.AgeableMob getBreedOffspring(ServerLevel serverLevel, AgeableMob mob) {
 
-        return ModEntityTypes.PROTOCERATOPS.get().create(level);
+        return ModEntityTypes.PROTOCERATOPS.get().create(level());
     }
 
     @Override
@@ -138,7 +137,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
         super.aiStep();
 
 
-        if (!this.level.isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
+        if (!this.level().isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
             ItemStack eggItem = new ItemStack(Items.EGG);
             this.playSound(SoundEvents.CHICKEN_EGG, 1.0F, (this.random.nextFloat() - this.random.nextFloat()) * 0.2F + 1.0F);
             this.spawnAtLocation(PROTOSHED.get());
@@ -154,23 +153,23 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<ProtoceratopsEntity> state) {
+        if (state.isMoving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
         if (this.isSleeping()){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("sleep", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("sleep"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
     }
 
@@ -237,7 +236,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
                 --this.countdown;
                 return false;
             } else {
-                return ProtoceratopsEntity.this.level.isNight();
+                return ProtoceratopsEntity.this.level().isNight();
             }
         }
 
@@ -273,7 +272,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
 
         public ChewScrubGoal(ProtoceratopsEntity auk) {
             this.mob = auk;
-            this.level = auk.level;
+            this.level = auk.level();
             this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK, Goal.Flag.JUMP));
         }
 
@@ -336,7 +335,7 @@ public class ProtoceratopsEntity extends Animal implements IAnimatable {
 
 
     @Override
-    public AnimationFactory getFactory() {
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
         return this.factory;
     }
 

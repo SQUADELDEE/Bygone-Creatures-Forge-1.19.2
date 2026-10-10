@@ -31,24 +31,26 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.Team;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import net.minecraft.util.Mth;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nullable;
 
+import java.util.EnumSet;
 import java.util.function.Predicate;
 
 import static net.jacob.bygonecreatures.item.ModItems.*;
 
-public class RaptorEntity extends TamableAnimal implements IAnimatable {
+public class RaptorEntity extends TamableAnimal implements GeoEntity {
 
     //prevents tamable entities from attacking other tamed ones. ALWAYS INCLUDE FOR MODDED TAMAMBLES
 
@@ -70,12 +72,46 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
     }
 
     private static final EntityDataAccessor<Integer> ATTACK_TICK = SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Boolean> LEAPING = SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.BOOLEAN);
+    // True only while RaptorFollowOwnerGoal is actually driving movement, not just "owner is
+    // far away" - same fix as TerrorBird's followingOwner flag (a wander goal can still be the
+    // one actually moving it for a tick or two before this claims the MOVE flag).
+    private static final EntityDataAccessor<Boolean> FOLLOWING_OWNER = SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.BOOLEAN);
+    // Mirrors getTarget() != null through synced data - see the setTarget() override below.
+    private static final EntityDataAccessor<Boolean> HAS_TARGET = SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.BOOLEAN);
 
-    public static final Predicate<LivingEntity> PREY_SELECTOR = (p_30437_) -> {
-        EntityType<?> entitytype = p_30437_.getType();
-        return entitytype == EntityType.CHICKEN || entitytype == EntityType.RABBIT || entitytype == EntityType.PIG;
-    };
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    // Hostile to any animal by default now, not just chicken/rabbit/pig - only excludes other
+    // raptors (packmates, not prey) and tamed animals (don't declare war on players' pets).
+    public static final Predicate<LivingEntity> PREY_SELECTOR = (entity) ->
+            entity.isAlive() && !(entity instanceof RaptorEntity) && !(entity instanceof TamableAnimal tameable && tameable.isTame());
+
+    private static final double PACK_ALERT_RADIUS = 24.0D;
+    private static final double PACK_REGROUP_SEARCH_RADIUS = 24.0D;
+    private static final double PACK_REGROUP_COMFORT_RADIUS = 8.0D;
+    private static final double LEAP_RANGE = 3.0D;
+    private static final double LATCH_RANGE = 1.2D;
+    private static final double LATCH_DISTANCE = 0.9D;
+    private static final int LATCH_BITE_LIMIT = 2;
+    private static final int LATCH_BITE_COOLDOWN_TICKS = 15;
+    private static final int LEAP_AIRBORNE_TIMEOUT_TICKS = 30;
+    private static final int LEAP_COOLDOWN_TICKS = 30;
+    private static final int RECOVER_TICKS = 15;
+
+    // Transient movement-physics switch only (not synced/persisted) - while true, travel()
+    // no-ops so gravity/physics can't fight the manual per-tick repositioning in LATCHED.
+    private boolean latched;
+
+    // Also flips vanilla's own noPhysics field in lockstep - Entity.push(Entity) bails out
+    // immediately if either party has noPhysics set (checked from both directions), so without
+    // this the raptor's hitbox sitting on top of the target every tick triggers normal mutual
+    // collision-separation each tick; since the raptor's own position gets overwritten right
+    // back by setPos() the only visible effect ends up being the target getting shoved around.
+    private void setLatched(boolean latched) {
+        this.latched = latched;
+        this.noPhysics = latched;
+    }
+
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
 
     private static final EntityDataAccessor<Boolean> SITTING =
             SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.BOOLEAN);
@@ -92,9 +128,9 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
     public static AttributeSupplier.Builder setAttributes() {
         return TamableAnimal.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 20.0D)
-                .add(Attributes.ATTACK_DAMAGE, 3.0f)
+                .add(Attributes.ATTACK_DAMAGE, 2.5f)
                 .add(Attributes.ATTACK_SPEED, 2.0f)
-                .add(Attributes.MOVEMENT_SPEED, 0.2f);
+                .add(Attributes.MOVEMENT_SPEED, 0.4f);
     }
 
     @Override
@@ -112,12 +148,13 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
         this.goalSelector.addGoal(1, new FloatGoal(this));
         this.goalSelector.addGoal(1, new SitWhenOrderedToGoal(this));
         this.goalSelector.addGoal(2, new BreedGoal(this, 1.0D));
-        this.goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.2D, false));
+        this.goalSelector.addGoal(2, new RaptorPounceAttackGoal());
         this.goalSelector.addGoal(2, new PanicGoal(this, 1.25D));
         this.goalSelector.addGoal(4, new LookAtPlayerGoal(this, Player.class, 8.0F));
-        this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.0D, 10.0F, 2.0F, false));
-        this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 1.0D));
-        this.goalSelector.addGoal(4, new FollowParentGoal(this, 1.25D));
+        this.goalSelector.addGoal(3, new RaptorFollowOwnerGoal(this, 1.6D, 10.0F, 2.0F, false));
+        this.goalSelector.addGoal(4, new WaterAvoidingRandomStrollGoal(this, 0.5D));
+        this.goalSelector.addGoal(4, new FollowParentGoal(this, 0.6D));
+        this.goalSelector.addGoal(4, new RaptorRegroupGoal());
 
         this.targetSelector.addGoal(1, new OwnerHurtByTargetGoal(this));
         this.targetSelector.addGoal(2, new OwnerHurtTargetGoal(this));
@@ -139,6 +176,49 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
 
     }
 
+    // Pack alert on proactively picking a target - HurtByTargetGoal.setAlertOthers() (already
+    // registered below) already covers "if one is attacked, the rest follow suit"; this covers
+    // the other half of the ask, "if one attacks something else, the rest follow suit".
+    @Override
+    public void setTarget(@Nullable LivingEntity target) {
+        LivingEntity previous = getTarget();
+        super.setTarget(target);
+        // Mob's own target field is server-side only, never synced to the client - predicate()
+        // runs client-side, so reading getTarget() there was always null and "run while
+        // fighting" could never trigger. HAS_TARGET mirrors it through entityData instead.
+        if (!level().isClientSide) {
+            this.getEntityData().set(HAS_TARGET, target != null);
+        }
+        if (target != null && target != previous && !isTame() && !level().isClientSide) {
+            alertPack(target);
+        }
+    }
+
+    private void alertPack(LivingEntity target) {
+        for (RaptorEntity nearby : level().getEntitiesOfClass(RaptorEntity.class, getBoundingBox().inflate(PACK_ALERT_RADIUS))) {
+            if (nearby != this && !nearby.isTame() && nearby.getTarget() == null) {
+                nearby.setTarget(target);
+            }
+        }
+    }
+
+    @Override
+    public boolean causeFallDamage(float distance, float multiplier, DamageSource source) {
+        return false;
+    }
+
+    // While latched onto a target (see RaptorPounceAttackGoal), position is driven entirely by
+    // the goal's own manual setPos() each tick - this stops normal gravity/physics from fighting
+    // that positioning in the same tick.
+    @Override
+    public void travel(Vec3 vec3) {
+        if (latched) {
+            setDeltaMovement(Vec3.ZERO);
+            return;
+        }
+        super.travel(vec3);
+    }
+
 
 
 
@@ -149,7 +229,7 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
     @Nullable
     @Override
     public AgeableMob getBreedOffspring(ServerLevel serverLevel, AgeableMob mob) {
-        return ModEntityTypes.RAPTOR.get().create(level);
+        return ModEntityTypes.RAPTOR.get().create(level());
     }
 
 
@@ -157,7 +237,7 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
     public void tick() {
         super.tick();
 
-        if (!this.level.isClientSide()) {
+        if (!this.level().isClientSide()) {
             if (this.getAttackTick() > 0) this.getEntityData().set(ATTACK_TICK, this.getAttackTick() - 1);
 
 
@@ -173,41 +253,152 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
         this.getEntityData().set(ATTACK_TICK, 20);
     }
 
+    // Synced (not a plain field): RaptorPounceAttackGoal only ticks server-side, but
+    // predicate() reads this client-side - same lesson as TerrorBird's followingOwner flag.
+    public boolean isLeaping() {
+        return this.getEntityData().get(LEAPING);
+    }
+
+    public void setLeaping(boolean leaping) {
+        this.getEntityData().set(LEAPING, leaping);
+    }
+
+    public boolean isFollowingOwner() {
+        return this.getEntityData().get(FOLLOWING_OWNER);
+    }
+
+    public void setFollowingOwner(boolean followingOwner) {
+        this.getEntityData().set(FOLLOWING_OWNER, followingOwner);
+    }
+
+    // Whether it should be running rather than walking: actively fighting/chasing a target,
+    // or (tamed) actually catching up to a distant owner. Everything else - casual wandering,
+    // following a parent, regrouping with the pack - is walk pace.
+    private boolean needsToRun() {
+        return this.getEntityData().get(HAS_TARGET) || isFollowingOwner();
+    }
+
+    public class RaptorFollowOwnerGoal extends FollowOwnerGoal {
+        public RaptorFollowOwnerGoal(TamableAnimal animal, double speedModifier, float startDistance, float stopDistance, boolean canFly) {
+            super(animal, speedModifier, startDistance, stopDistance, canFly);
+        }
+
+        @Override
+        public void start() {
+            super.start();
+            RaptorEntity.this.setFollowingOwner(true);
+        }
+
+        @Override
+        public void stop() {
+            super.stop();
+            RaptorEntity.this.setFollowingOwner(false);
+        }
+    }
+
+    // Wild-only: when not fighting, keeps stray raptors from drifting too far from the rest of
+    // their pack - walks (not runs) toward the nearest wild packmate once it's fallen more than
+    // PACK_REGROUP_COMFORT_RADIUS away, and otherwise stays out of the way of normal wandering.
+    public class RaptorRegroupGoal extends Goal {
+        @Nullable
+        private RaptorEntity packmate;
+
+        public RaptorRegroupGoal() {
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE));
+        }
+
+        public boolean canUse() {
+            // isTame() alone only flips true on the final successful feeding - a raptor mid-way
+            // through being tamed (meatFeedings already ticking up) is still technically wild,
+            // so without the meatFeedings check it kept trying to wander back to its pack the
+            // whole time a player was feeding it.
+            if (RaptorEntity.this.isTame() || RaptorEntity.this.meatFeedings > 0
+                    || RaptorEntity.this.isSitting() || RaptorEntity.this.getTarget() != null) return false;
+            packmate = findFarPackmate();
+            return packmate != null;
+        }
+
+        public boolean canContinueToUse() {
+            // isTame() alone only flips true on the final successful feeding - a raptor mid-way
+            // through being tamed (meatFeedings already ticking up) is still technically wild,
+            // so without the meatFeedings check it kept trying to wander back to its pack the
+            // whole time a player was feeding it.
+            if (RaptorEntity.this.isTame() || RaptorEntity.this.meatFeedings > 0
+                    || RaptorEntity.this.isSitting() || RaptorEntity.this.getTarget() != null) return false;
+            return packmate != null && packmate.isAlive()
+                    && RaptorEntity.this.distanceToSqr(packmate) > PACK_REGROUP_COMFORT_RADIUS * PACK_REGROUP_COMFORT_RADIUS;
+        }
+
+        public void start() {
+            RaptorEntity.this.getNavigation().moveTo(packmate, 1.0D);
+        }
+
+        public void tick() {
+            if (packmate == null) return;
+            if (RaptorEntity.this.getNavigation().isDone()) {
+                RaptorEntity.this.getNavigation().moveTo(packmate, 1.0D);
+            }
+        }
+
+        public void stop() {
+            packmate = null;
+            RaptorEntity.this.getNavigation().stop();
+        }
+
+        @Nullable
+        private RaptorEntity findFarPackmate() {
+            RaptorEntity nearest = null;
+            double nearestDistSq = Double.MAX_VALUE;
+            for (RaptorEntity other : RaptorEntity.this.level().getEntitiesOfClass(RaptorEntity.class, RaptorEntity.this.getBoundingBox().inflate(PACK_REGROUP_SEARCH_RADIUS))) {
+                if (other == RaptorEntity.this || other.isTame() || !other.isAlive()) continue;
+                double distSq = RaptorEntity.this.distanceToSqr(other);
+                if (distSq < nearestDistSq) {
+                    nearestDistSq = distSq;
+                    nearest = other;
+                }
+            }
+            return (nearest != null && nearestDistSq > PACK_REGROUP_COMFORT_RADIUS * PACK_REGROUP_COMFORT_RADIUS) ? nearest : null;
+        }
+    }
 
 
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && !(this.getAttackTick() > 0) && !(this.isSitting()) && !(this.isTame())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+
+    public PlayState predicate(AnimationState<RaptorEntity> state) {
+        // Airborne mid-pounce - takes priority over everything else while it lasts.
+        if (this.isLeaping()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("leap"));
             return PlayState.CONTINUE;
         }
 
-        if (event.isMoving() && !(this.getAttackTick() > 0) && this.isTame() && !(this.isSitting())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("run", ILoopType.EDefaultLoopTypes.LOOP));
+        // Running while actually fighting/chasing or catching up to a distant owner; an easy
+        // walk for everything else (casual wandering, following a parent, regrouping).
+        if (state.isMoving() && !(this.isSitting()) && needsToRun()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("run"));
             return PlayState.CONTINUE;
         }
 
-        if (this.getAttackTick() > 0){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("bite", ILoopType.EDefaultLoopTypes.LOOP));
+        if (state.isMoving() && !(this.isSitting())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
 
         if (this.isSitting()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("sitting", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("sitting"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
 
     }
@@ -217,8 +408,197 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
 
 
 
+    // Leap-and-latch attack: closes in, jumps the last stretch (real velocity, not just
+    // animation), attaches to the target at a randomly-rolled angle for a couple of bites, then
+    // detaches and has to close in and jump again to reattach. Replaces the old plain
+    // MeleeAttackGoal.
+    public class RaptorPounceAttackGoal extends Goal {
+        private enum Phase { PURSUE, AIRBORNE, LATCHED, RECOVER }
+
+        private Phase phase = Phase.PURSUE;
+        private LivingEntity target;
+        private int leapCooldown;
+        private int airborneTimer;
+        private int biteCooldown;
+        private int biteCount;
+        private int recoverTimer;
+        private double latchAngle;
+        private double circleAngle;
+
+        public RaptorPounceAttackGoal() {
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
+        }
+
+        public boolean canUse() {
+            LivingEntity t = RaptorEntity.this.getTarget();
+            return t != null && t.isAlive();
+        }
+
+        public boolean canContinueToUse() {
+            LivingEntity t = RaptorEntity.this.getTarget();
+            return t != null && t.isAlive();
+        }
+
+        public void start() {
+            target = RaptorEntity.this.getTarget();
+            phase = Phase.PURSUE;
+            leapCooldown = 0;
+            circleAngle = RaptorEntity.this.random.nextDouble() * Math.PI * 2.0D;
+            RaptorEntity.this.setLatched(false);
+        }
+
+        public void stop() {
+            RaptorEntity.this.setLatched(false);
+            RaptorEntity.this.setLeaping(false);
+            target = null;
+            RaptorEntity.this.getNavigation().stop();
+        }
+
+        public void tick() {
+            if (target == null || !target.isAlive()) return;
+
+            switch (phase) {
+                case PURSUE -> tickPursue();
+                case AIRBORNE -> tickAirborne();
+                case LATCHED -> tickLatched();
+                case RECOVER -> tickRecover();
+            }
+        }
+
+        // Wider/taller targets need a longer effective reach - a raw center-to-center distance
+        // check doesn't account for how far the target's own hitbox extends toward the raptor.
+        private double leapTriggerRange() {
+            return LEAP_RANGE + target.getBbWidth() * 0.5D;
+        }
+
+        private double latchReach() {
+            return LATCH_RANGE + target.getBbWidth() * 0.5D;
+        }
+
+        private void tickPursue() {
+            RaptorEntity.this.getLookControl().setLookAt(target, 30f, 30f);
+
+            if (leapCooldown > 0) {
+                leapCooldown--;
+                // Keep moving instead of freezing next to the target after a whiffed jump -
+                // circle around it (radius tied to its size) so it's still visibly running
+                // and lined up for a fresh approach once the cooldown clears.
+                circleAngle += 0.2D;
+                double radius = leapTriggerRange() + 1.0D;
+                Vec3 circlePoint = target.position().add(Math.cos(circleAngle) * radius, 0.0D, Math.sin(circleAngle) * radius);
+                RaptorEntity.this.getNavigation().moveTo(circlePoint.x, circlePoint.y, circlePoint.z, 1.2D);
+                return;
+            }
+
+            double distSq = RaptorEntity.this.distanceToSqr(target);
+            double triggerRange = leapTriggerRange();
+            if (distSq <= triggerRange * triggerRange) {
+                leap();
+            } else {
+                RaptorEntity.this.getNavigation().moveTo(target, 1.2D);
+            }
+        }
+
+        private void leap() {
+            // Aim at the target's mid-body height, not its feet - a raptor jumping at a tall
+            // mob's ground position undershoots and never gets close enough to latch.
+            Vec3 aimPoint = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
+            Vec3 dir = aimPoint.subtract(RaptorEntity.this.position());
+            Vec3 horizontal = new Vec3(dir.x, 0.0D, dir.z);
+            horizontal = horizontal.lengthSqr() < 1.0E-4D ? RaptorEntity.this.getLookAngle() : horizontal.normalize();
+            // Vertical impulse scales with target height too, capped so it doesn't rocket off
+            // a Glyptodon-sized mob.
+            double verticalImpulse = Mth.clamp(0.35D + target.getBbHeight() * 0.15D, 0.35D, 0.85D);
+            RaptorEntity.this.setDeltaMovement(horizontal.scale(0.9D).add(0.0D, verticalImpulse, 0.0D));
+            phase = Phase.AIRBORNE;
+            airborneTimer = LEAP_AIRBORNE_TIMEOUT_TICKS;
+            RaptorEntity.this.setLeaping(true);
+            RaptorEntity.this.getNavigation().stop();
+        }
+
+        private void tickAirborne() {
+            RaptorEntity.this.getLookControl().setLookAt(target, 30f, 30f);
+
+            double distSq = RaptorEntity.this.distanceToSqr(target);
+            double reach = latchReach();
+            if (distSq <= reach * reach) {
+                latchOn();
+                return;
+            }
+
+            // Landed without connecting - don't sit in the leap pose for the rest of the
+            // timeout waiting for a landing that already happened; get moving again right away.
+            // Guarded by a few ticks of grace so this can't fire before it's even left the
+            // ground on the very first tick of the jump.
+            boolean justLaunched = airborneTimer > LEAP_AIRBORNE_TIMEOUT_TICKS - 3;
+            if (!justLaunched && RaptorEntity.this.onGround()) {
+                whiff();
+                return;
+            }
+
+            if (--airborneTimer <= 0) {
+                whiff();
+            }
+        }
+
+        private void whiff() {
+            // whiffed the pounce - back to pursuing, cooldown before it can leap again
+            phase = Phase.PURSUE;
+            leapCooldown = LEAP_COOLDOWN_TICKS;
+            RaptorEntity.this.setLeaping(false);
+        }
+
+        private void latchOn() {
+            phase = Phase.LATCHED;
+            RaptorEntity.this.setLeaping(false);
+            // Rolled once per latch, independently per-raptor - this is what spreads a pack
+            // around the same victim instead of everyone piling onto one spot.
+            latchAngle = RaptorEntity.this.random.nextDouble() * Math.PI * 2.0D;
+            biteCount = 0;
+            biteCooldown = 0;
+            RaptorEntity.this.setLatched(true);
+        }
+
+        private void tickLatched() {
+            Vec3 offset = new Vec3(Math.cos(latchAngle), 0.0D, Math.sin(latchAngle)).scale(LATCH_DISTANCE);
+            Vec3 pos = target.position().add(offset).add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
+            RaptorEntity.this.setPos(pos.x, pos.y, pos.z);
+            RaptorEntity.this.setDeltaMovement(Vec3.ZERO);
+            RaptorEntity.this.getLookControl().setLookAt(target, 30f, 30f);
+
+            if (!target.isAlive()) {
+                detach();
+                return;
+            }
+
+            if (biteCooldown > 0) {
+                biteCooldown--;
+            } else {
+                RaptorEntity.this.doHurtTarget(target);
+                biteCount++;
+                biteCooldown = LATCH_BITE_COOLDOWN_TICKS;
+                if (biteCount >= LATCH_BITE_LIMIT) {
+                    detach();
+                }
+            }
+        }
+
+        private void detach() {
+            RaptorEntity.this.setLatched(false);
+            phase = Phase.RECOVER;
+            recoverTimer = RECOVER_TICKS;
+            leapCooldown = LEAP_COOLDOWN_TICKS;
+        }
+
+        private void tickRecover() {
+            if (--recoverTimer <= 0) {
+                phase = Phase.PURSUE;
+            }
+        }
+    }
+
     @Override
-    public AnimationFactory getFactory() {
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
         return this.factory;
     }
 
@@ -280,15 +660,15 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
             meatFeedings++;
             if (meatFeedings > 9) {
                 this.tame(player);
-                this.level.broadcastEntityEvent(this, (byte) 7);
+                this.level().broadcastEntityEvent(this, (byte) 7);
             } else {
-                this.level.broadcastEntityEvent(this, (byte) 6);
+                this.level().broadcastEntityEvent(this, (byte) 6);
             }
             return InteractionResult.SUCCESS;
         }
 
 
-        if(isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND) {
+        if(isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND) {
             setSitting(!isSitting());
             return InteractionResult.SUCCESS;
         }
@@ -322,6 +702,9 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
         super.defineSynchedData();
         this.entityData.define(SITTING, false);
         this.getEntityData().define(ATTACK_TICK, 0);
+        this.getEntityData().define(LEAPING, false);
+        this.getEntityData().define(FOLLOWING_OWNER, false);
+        this.getEntityData().define(HAS_TARGET, false);
     }
 
     public void setSitting(boolean sitting) {
@@ -353,12 +736,12 @@ public class RaptorEntity extends TamableAnimal implements IAnimatable {
         super.setTame(tamed);
         if (tamed) {
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(30.0D);
-            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(2D);
+            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(1.6D);
             getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue((double)0.4f);
         } else {
             getAttribute(Attributes.MAX_HEALTH).setBaseValue(20.0D);
-            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(1.5D);
-            getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue((double)0.1f);
+            getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(1.2D);
+            getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue((double)0.2f);
         }
     }
 

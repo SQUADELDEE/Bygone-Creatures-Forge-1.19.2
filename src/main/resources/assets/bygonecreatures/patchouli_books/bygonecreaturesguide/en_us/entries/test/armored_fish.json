@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/armo.png"],
-      "title": "Armored Fish"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:armoredfish{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Armored Fish",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:smelting",

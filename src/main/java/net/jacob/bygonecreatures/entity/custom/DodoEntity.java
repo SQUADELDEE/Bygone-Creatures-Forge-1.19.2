@@ -22,23 +22,22 @@ import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gameevent.GameEvent;
 import org.jetbrains.annotations.Nullable;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import static net.jacob.bygonecreatures.item.ModItems.DODOEGG;
 
-public class DodoEntity extends Animal implements IAnimatable {
+public class DodoEntity extends Animal implements GeoEntity {
 
 
     public int eggTime = this.random.nextInt(6000) + 6000;
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
     private net.minecraft.world.entity.AgeableMob AgeableMob;
 
     public DodoEntity(EntityType<? extends Animal> entityType, Level level) {
@@ -91,7 +90,7 @@ public class DodoEntity extends Animal implements IAnimatable {
     @Override
     public AgeableMob getBreedOffspring(ServerLevel serverLevel, AgeableMob mob) {
 
-        return ModEntityTypes.DODO.get().create(level);
+        return ModEntityTypes.DODO.get().create(level());
     }
 
     @Override
@@ -108,7 +107,7 @@ public class DodoEntity extends Animal implements IAnimatable {
         super.aiStep();
 
 
-        if (!this.level.isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
+        if (!this.level().isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
             ItemStack eggItem = new ItemStack(Items.EGG);
             this.playSound(SoundEvents.CHICKEN_EGG, 1.0F, (this.random.nextFloat() - this.random.nextFloat()) * 0.2F + 1.0F);
             this.spawnAtLocation(DODOEGG.get());
@@ -121,19 +120,19 @@ public class DodoEntity extends Animal implements IAnimatable {
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<DodoEntity> state) {
+        if (state.isMoving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
     }
 
@@ -159,8 +158,8 @@ public class DodoEntity extends Animal implements IAnimatable {
 
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
     protected SoundEvent getAmbientSound() {

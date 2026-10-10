@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/as.png"],
-      "title": "Anomalocaris"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:anomalocaris{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Anomalocaris",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:crafting",

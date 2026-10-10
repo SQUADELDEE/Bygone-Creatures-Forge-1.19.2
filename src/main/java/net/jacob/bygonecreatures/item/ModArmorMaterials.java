@@ -3,7 +3,7 @@ package net.jacob.bygonecreatures.item;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.LazyLoadedValue;
-import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.ArmorMaterial;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Ingredient;
@@ -72,12 +72,12 @@ public enum ModArmorMaterials implements ArmorMaterial {
         this.repairIngredient = new LazyLoadedValue<>(p_40481_);
     }
 
-    public int getDurabilityForSlot(EquipmentSlot p_40484_) {
-        return HEALTH_PER_SLOT[p_40484_.getIndex()] * this.durabilityMultiplier;
+    public int getDurabilityForType(ArmorItem.Type p_40484_) {
+        return HEALTH_PER_SLOT[p_40484_.getSlot().getIndex()] * this.durabilityMultiplier;
     }
 
-    public int getDefenseForSlot(EquipmentSlot p_40487_) {
-        return this.slotProtections[p_40487_.getIndex()];
+    public int getDefenseForType(ArmorItem.Type p_40487_) {
+        return this.slotProtections[p_40487_.getSlot().getIndex()];
     }
 
     public int getEnchantmentValue() {

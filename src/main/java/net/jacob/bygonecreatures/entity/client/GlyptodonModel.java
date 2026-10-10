@@ -4,44 +4,44 @@ import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.entity.custom.DodoEntity;
 import net.jacob.bygonecreatures.entity.custom.GlyptodonEntity;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.processor.IBone;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
-import software.bernie.geckolib3.model.provider.data.EntityModelData;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.constant.DataTickets;
+import software.bernie.geckolib.model.data.EntityModelData;
+import software.bernie.geckolib.cache.object.GeoBone;
+import software.bernie.geckolib.model.GeoModel;
 
-public class GlyptodonModel extends AnimatedGeoModel<GlyptodonEntity> {
+public class GlyptodonModel extends GeoModel<GlyptodonEntity> {
 
 
     @Override
     public ResourceLocation getModelResource(GlyptodonEntity object) {
 
-        return new ResourceLocation(BygoneCreatures.MOD_ID, "geo/glyptodonchest.geo.json");
+        return new ResourceLocation(BygoneCreatures.MOD_ID, "geo/glyptodon.geo.json");
 
 
     }
 
     @Override
     public ResourceLocation getTextureResource(GlyptodonEntity object) {
-        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/glyptodon/blanktext.png");
+        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/glyptodon/chestlessglypto.png");
     }
 
     @Override
     public ResourceLocation getAnimationResource(GlyptodonEntity animatable) {
 
-        return new ResourceLocation(BygoneCreatures.MOD_ID, "animations/glyptodonchest.animation.json");
+        return new ResourceLocation(BygoneCreatures.MOD_ID, "animations/glyptodon.animation.json");
 
 
     }
 
 
     @Override
-    public void setLivingAnimations(GlyptodonEntity entity, Integer uniqueID, AnimationEvent customPredicate) {
-        super.setCustomAnimations(entity, uniqueID, customPredicate);
-        IBone head_rotation = this.getAnimationProcessor().getBone("headhold");
-
-        EntityModelData extraData = (EntityModelData) customPredicate.getExtraDataOfType(EntityModelData.class).get(0);
-
-        head_rotation.setRotationX(extraData.headPitch * ((float) Math.PI / 180F));
-        head_rotation.setRotationY(extraData.netHeadYaw * ((float) Math.PI / 180F));
+    public void setCustomAnimations(GlyptodonEntity entity, long instanceId, AnimationState<GlyptodonEntity> animationState) {
+        super.setCustomAnimations(entity, instanceId, animationState);
+        EntityModelData entityData = animationState.getData(DataTickets.ENTITY_MODEL_DATA);
+        getBone("head").ifPresent(head_rotation -> {
+            head_rotation.setRotX(entityData.headPitch() * ((float) Math.PI / 180F));
+            head_rotation.setRotY(entityData.netHeadYaw() * ((float) Math.PI / 180F));
+        });
     }
 }

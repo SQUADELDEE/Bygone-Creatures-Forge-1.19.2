@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/ms.png"],
-      "title": "P. Papillion"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:mouse{ForgeData:{bg_tilt:25.0f}}",
+      "name": "P. Papillion",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:spotlight",
@@ -19,8 +19,6 @@
       "type": "patchouli:crafting",
       "recipe": "bygonecreatures:trapblock",
       "text": "Digging behavior can be toggled on and off with a stick. They can also be made to sit/stand by shift clicking without a stick in the main hand. They can also be healed with melon seeds and bred with wheat seeds."
-
-
     }
   ]
 }

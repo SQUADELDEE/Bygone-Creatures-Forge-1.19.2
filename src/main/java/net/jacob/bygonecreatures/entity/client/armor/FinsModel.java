@@ -2,11 +2,10 @@ package net.jacob.bygonecreatures.entity.client.armor;
 
 import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.item.client.custom.FinSet;
-import net.jacob.bygonecreatures.item.client.custom.FinSet;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
+import software.bernie.geckolib.model.GeoModel;
 
-public class FinsModel extends AnimatedGeoModel<FinSet> {
+public class FinsModel extends GeoModel<FinSet> {
 
 
     @Override

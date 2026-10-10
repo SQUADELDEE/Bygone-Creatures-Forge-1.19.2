@@ -4,9 +4,9 @@ import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.entity.custom.DragonflyEntity;
 import net.jacob.bygonecreatures.entity.custom.DragonflyEntity;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
+import software.bernie.geckolib.model.GeoModel;
 
-public class DragonflyModel extends AnimatedGeoModel<DragonflyEntity> {
+public class DragonflyModel extends GeoModel<DragonflyEntity> {
 
 
 

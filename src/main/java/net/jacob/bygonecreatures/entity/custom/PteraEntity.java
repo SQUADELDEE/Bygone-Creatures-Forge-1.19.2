@@ -1,140 +1,156 @@
 package net.jacob.bygonecreatures.entity.custom;
 
-import net.jacob.bygonecreatures.entity.ModEntityTypes;
-import net.jacob.bygonecreatures.entity.ai.DirectPathNavigator;
-import net.jacob.bygonecreatures.entity.ai.FlightMoveController;
-import net.jacob.bygonecreatures.entity.ai.FlyingAITargetDroppedItems;
-import net.jacob.bygonecreatures.item.ModItems;
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.ItemParticleOption;
-import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.ListTag;
-import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
-import net.minecraft.util.RandomSource;
-import net.minecraft.world.DifficultyInstance;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.control.MoveControl;
-import net.minecraft.world.entity.ai.goal.*;
-import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
-import net.minecraft.world.entity.ai.util.LandRandomPos;
-import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.animal.AbstractFish;
+import net.minecraft.world.entity.animal.Squid;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.crafting.Ingredient;
-import net.minecraft.world.level.*;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.gameevent.GameEvent;
-import net.minecraft.world.level.pathfinder.BlockPathTypes;
-import net.minecraft.world.level.saveddata.maps.MapDecoration;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.registries.ForgeRegistries;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nullable;
-import java.util.*;
-import java.util.function.Predicate;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.List;
 
-public class PteraEntity extends Animal implements ITargetsDroppedItems, IAnimatable{
+// A flocking sea-bird: lives almost entirely on the wing, patrols over the ocean in a loose
+// echelon behind a leader, and hunts like a gannet - folds up and plunges from height onto fish
+// near the surface, then flies off with its catch and swallows it. A PathfinderMob (not an
+// Animal, which opts out of despawning), so flocks that drift away from players despawn
+// naturally; PteraFlockSpawner brings new ones in over ocean biomes.
+public class PteraEntity extends PathfinderMob implements GeoEntity {
 
-    private static final EntityDataAccessor<Boolean> FLYING = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BOOLEAN);
-    private static final EntityDataAccessor<Integer> PECK_TICK = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> VARIANT = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> GOLDEN_TIME = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Boolean> ENCHANTED = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BOOLEAN);
-    private static final EntityDataAccessor<Optional<BlockState>> SAPLING_STATE = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BLOCK_STATE);
-    private static final EntityDataAccessor<Integer> SAPLING_TIME = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.INT);
-    private static final HashMap<String, String> FEEDING_DATA = new HashMap<>();
-    private static final List<ItemStack> FEEDING_STACKS = new ArrayList<>();
-    private static boolean initFeedingData = false;
-    public float prevFlyProgress;
-    public float flyProgress;
-    public float prevPeckProgress;
-    public float peckProgress;
-    private boolean isLandNavigator;
-    private int timeFlying;
-    private int heldItemTime;
-    private boolean aiItemFlag;
+    private static final EntityDataAccessor<Boolean> DIVING = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Boolean> GLIDING = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Boolean> HAS_FISH = SynchedEntityData.defineId(PteraEntity.class, EntityDataSerializers.BOOLEAN);
 
-    public PteraEntity(EntityType type, Level worldIn) {
-        super(type, worldIn);
-//        initFeedingData();
-        this.setPathfindingMalus(BlockPathTypes.DANGER_FIRE, -1.0F);
-        this.setPathfindingMalus(BlockPathTypes.DAMAGE_FIRE, -1.0F);
-        this.setPathfindingMalus(BlockPathTypes.COCOA, -1.0F);
-        this.setPathfindingMalus(BlockPathTypes.LEAVES, 0.0F);
-        switchNavigator(true);
+    // flock
+    public static final int MAX_FLOCK_SIZE = 14;
+    private static final double FLOCK_JOIN_RANGE = 40.0D;
+    private static final double FLOCK_LOSE_RANGE_SQR = 96.0D * 96.0D;
+    private static final double CRUISE_SPEED = 0.8D;       // speed modifier on FLYING_SPEED
+    private static final int CRUISE_ALTITUDE_MIN = 12;     // blocks above the water surface
+    private static final int CRUISE_ALTITUDE_VARIATION = 10;
+
+    // hunting
+    private static final double PREY_SCAN_RANGE = 28.0D;
+    private static final int PREY_MAX_DEPTH = 6;           // fish deeper than this below the surface are out of reach
+    private static final double DIVE_ALTITUDE = 15.0D;     // height above the surface the dive starts from
+    private static final float DIVE_START_SPEED = 0.45F;
+    private static final float DIVE_ACCEL = 0.08F;
+    private static final float DIVE_MAX_SPEED = 1.4F;
+    private static final int EAT_TICKS = 50;
+
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
+
+    @Nullable
+    private PteraEntity leader;
+    private int flockSearchDelay;
+    private double cruiseY;            // altitude to hold formation at while the leader is off hunting
+    @Nullable
+    private Vec3 lastWaterPos;         // last place we were over open water: where to head when stranded over land
+
+    float diveSpeed;                   // read by PteraMoveControl while diving
+    private boolean hunting;
+    private int huntCooldown;
+    private int huntDelay;
+    private int eatTicks;
+    private int glideTicks;
+    private int panicTicks;
+
+    public PteraEntity(EntityType<? extends PteraEntity> type, Level level) {
+        super(type, level);
+        this.moveControl = new PteraMoveControl(this);
+        this.setNoGravity(true);
+        this.huntCooldown = 100 + this.random.nextInt(300); // don't all dive the moment they spawn
+        this.cruiseY = this.getY();
     }
 
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    public static AttributeSupplier.Builder bakeAttributes() {
+        return Mob.createMobAttributes()
+                .add(Attributes.MAX_HEALTH, 10.0D)
+                .add(Attributes.MOVEMENT_SPEED, 0.2D)
+                .add(Attributes.FLYING_SPEED, 0.45D)
+                .add(Attributes.ATTACK_DAMAGE, 3.0D)
+                .add(Attributes.FOLLOW_RANGE, 32.0D);
+    }
 
+    // ------------------------------------------------------------------ animation
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && isOnGround()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
-            return PlayState.CONTINUE;
+    public PlayState predicate(AnimationState<PteraEntity> state) {
+        if (isDiving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("flyglide"));
+        } else if (onGround()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop(state.isMoving() ? "walk" : "idle"));
+        } else if (isGliding()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("flyglide"));
+        } else {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("fly"));
         }
-
-
-        if (isFlying() && !isOnGround()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("flyglide", ILoopType.EDefaultLoopTypes.LOOP));
-            return PlayState.CONTINUE;
-        }
-
-        if (isFlying() && !(event.isMoving())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("fly", ILoopType.EDefaultLoopTypes.LOOP));
-            return PlayState.CONTINUE;
-        }
-
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
         return PlayState.CONTINUE;
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
-                4, this::predicate));
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller", 4, this::predicate));
     }
 
+    @Override
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.factory;
+    }
+
+    // ------------------------------------------------------------------ state
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    protected void defineSynchedData() {
+        super.defineSynchedData();
+        this.entityData.define(DIVING, false);
+        this.entityData.define(GLIDING, false);
+        this.entityData.define(HAS_FISH, false);
+    }
+
+    public boolean isDiving() {
+        return this.entityData.get(DIVING);
+    }
+
+    public boolean isGliding() {
+        return this.entityData.get(GLIDING);
+    }
+
+    public boolean hasFish() {
+        return this.entityData.get(HAS_FISH);
+    }
+
+    public boolean isHunting() {
+        return hunting;
     }
 
     @Override
@@ -147,127 +163,29 @@ public class PteraEntity extends Animal implements ITargetsDroppedItems, IAnimat
         return 20;
     }
 
-
-
-
-
-    public static boolean canToucanSpawn(EntityType type, LevelAccessor worldIn, MobSpawnType reason, BlockPos pos, RandomSource randomIn) {
-        return true;
+    // Vanilla would drop a mob this far (32+) from a player within a minute or so on average. A flock
+    // is far more interesting if it lasts, so only let them go once they're well outside the area
+    // the player can see them in (vanilla still removes anything past 128 blocks outright).
+    @Override
+    public boolean removeWhenFarAway(double distanceToClosestPlayerSqr) {
+        return distanceToClosestPlayerSqr > 80.0D * 80.0D;
     }
 
-//    private static void initFeedingData() {
-//        if (!initFeedingData || FEEDING_DATA.isEmpty()) {
-//            initFeedingData = true;
-//            for (String str : AMConfig.toucanFruitMatches) {
-//                String[] split = str.split("\\|");
-//                if (split.length >= 2) {
-//                    FEEDING_DATA.put(split[0], split[1]);
-//                    FEEDING_STACKS.add(new ItemStack(ForgeRegistries.ITEMS.getValue(new ResourceLocation(split[0]))));
-//                }
-//            }
-//        }
-//    }
-
-    public static AttributeSupplier.Builder bakeAttributes() {
-        return Monster.createMonsterAttributes().add(Attributes.MAX_HEALTH, 6.0D).add(Attributes.MOVEMENT_SPEED, 0.2F);
-    }
-
-//    protected SoundEvent getAmbientSound() {
-//        return AMSoundRegistry.TOUCAN_IDLE.get();
-//    }
-//
-//    protected SoundEvent getHurtSound(DamageSource damageSourceIn) {
-//        return AMSoundRegistry.TOUCAN_HURT.get();
-//    }
-//
-//    protected SoundEvent getDeathSound() {
-//        return AMSoundRegistry.TOUCAN_HURT.get();
-//    }
-
-//    public boolean checkSpawnObstruction(LevelReader p_29005_) {
-//        if (p_29005_.isUnobstructed(this) && !p_29005_.containsAnyLiquid(this.getBoundingBox())) {
-//            BlockPos blockpos = this.blockPosition();
-//            if (blockpos.getY() < p_29005_.getSeaLevel()) {
-//                return false;
-//            }
-//            BlockState blockstate2 = p_29005_.getBlockState(blockpos.below());
-//            return blockstate2.is(Blocks.GRASS_BLOCK) || blockstate2.is(BlockTags.LEAVES);
-//        }
-//        return false;
-//    }
-//
-//    public boolean checkSpawnRules(LevelAccessor worldIn, MobSpawnType spawnReasonIn) {
-//        return AMEntityRegistry.rollSpawn(AMConfig.toucanSpawnRolls, this.getRandom(), spawnReasonIn);
-//    }
-
-    @Nullable
-    private BlockState getSaplingFor(ItemStack stack) {
-        ResourceLocation name = ForgeRegistries.ITEMS.getKey(stack.getItem());
-        if (!stack.isEmpty() && name != null && FEEDING_DATA.containsKey(name.toString())) {
-            String str = FEEDING_DATA.get(name.toString());
-            Block block = ForgeRegistries.BLOCKS.getValue(new ResourceLocation(str));
-            if (block != null) {
-                return block.defaultBlockState();
-            }
-        }
-        return null;
-    }
-
-    public InteractionResult mobInteract(Player player, InteractionHand hand) {
-        ItemStack itemstack = player.getItemInHand(hand);
-        InteractionResult type = super.mobInteract(player, hand);
-        if (getSaplingFor(itemstack) != null && this.getSaplingTime() <= 0 && this.getMainHandItem().isEmpty()) {
-            peck();
-            ItemStack duplicate = itemstack.copy();
-            duplicate.setCount(1);
-            this.setItemInHand(InteractionHand.MAIN_HAND, duplicate);
-            this.usePlayerItem(player, hand, itemstack);
-            return InteractionResult.SUCCESS;
-        } else {
-            return type;
-        }
-    }
-
-    protected void registerGoals() {
-        super.registerGoals();
-//        initFeedingData();
-        this.goalSelector.addGoal(0, new FloatGoal(this));
-        this.goalSelector.addGoal(1, new PanicGoal(this, 1.3D));
-        this.goalSelector.addGoal(2, new AIPlantTrees());
-        this.goalSelector.addGoal(3, new BreedGoal(this, 1.0D));
-//        this.goalSelector.addGoal(4, new TemptGoal(this, 1.0D, Ingredient.of(FEEDING_STACKS.stream()), false) {
-//            public boolean canUse() {
-//                return !PteraEntity.this.aiItemFlag && super.canUse();
-//            }
-//        });
-        this.goalSelector.addGoal(5, new AIWanderIdle());
-        this.goalSelector.addGoal(7, new LookAtPlayerGoal(this, Player.class, 6.0F));
-        this.goalSelector.addGoal(8, new LookAtPlayerGoal(this, PathfinderMob.class, 6.0F));
-        this.goalSelector.addGoal(9, new RandomLookAroundGoal(this));
-        this.targetSelector.addGoal(1, new FlyingAITargetDroppedItems(this, false, false, 15, 16));
+    // Vanilla draws an entity out to roughly 64x its average hitbox edge, which for even this bigger box is
+    // well short of how far out a flock over the ocean is worth seeing, so extend it.
+    @Override
+    public boolean shouldRenderAtSqrDistance(double distanceSqr) {
+        return distanceSqr < 112.0D * 112.0D || super.shouldRenderAtSqrDistance(distanceSqr);
     }
 
     @Override
-    public void setItemFlag(boolean itemAIFlag) {
-        aiItemFlag = itemAIFlag;
-    }
-
-
-    public boolean isFood(ItemStack stack) {
-        Item item = stack.getItem();
-        return item == Items.EGG;
+    public boolean isPushable() {
+        return false; // a tight flock shouldn't shove itself around
     }
 
     @Override
-    protected void defineSynchedData() {
-        super.defineSynchedData();
-        this.entityData.define(SAPLING_STATE, Optional.empty());
-        this.entityData.define(FLYING, false);
-        this.entityData.define(PECK_TICK, 0);
-        this.entityData.define(VARIANT, 0);
-        this.entityData.define(GOLDEN_TIME, 0);
-        this.entityData.define(SAPLING_TIME, 0);
-        this.entityData.define(ENCHANTED, false);
+    public boolean canBeLeashed(Player player) {
+        return false;
     }
 
     @Override
@@ -275,574 +193,502 @@ public class PteraEntity extends Animal implements ITargetsDroppedItems, IAnimat
         return false;
     }
 
-    public void tick() {
-        super.tick();
-        prevFlyProgress = flyProgress;
-        prevPeckProgress = peckProgress;
-        if (this.getGoldenTime() > 0 && !level.isClientSide) {
-            this.setGoldenTime(this.getGoldenTime() - 1);
-        }
-        if (isFlying() && flyProgress < 5F) {
-            flyProgress++;
-        }
-        if (!isFlying() && flyProgress > 0F) {
-            flyProgress--;
-        }
-        if (!level.isClientSide) {
-            if (isFlying() && this.isLandNavigator) {
-                switchNavigator(false);
-            }
-            if (!isFlying() && !this.isLandNavigator) {
-                switchNavigator(true);
-            }
-            if (this.isFlying()) {
-                this.setNoGravity(true);
-                if (this.isFlying() && !this.onGround) {
-                    if (!this.isInWaterOrBubble()) {
-                        this.setDeltaMovement(this.getDeltaMovement().multiply(1F, 0.6F, 1F));
-                    }
-                }
-                this.timeFlying++;
-            } else {
-                this.setNoGravity(false);
-                this.timeFlying = 0;
-            }
-        }
-        if (this.entityData.get(PECK_TICK) > 0) {
-            this.entityData.set(PECK_TICK, this.entityData.get(PECK_TICK) - 1);
-            if (peckProgress < 5F) {
-                peckProgress++;
-            }
-        } else {
-            if (peckProgress > 0F) {
-                peckProgress--;
-            }
-        }
-        if (peckProgress >= 5 && this.getMainHandItem().isEmpty() && this.getSaplingState() != null) {
-            peckBlockEffect();
-        }
-        if (!this.getMainHandItem().isEmpty()) {
-            heldItemTime++;
-            if (heldItemTime > 10 && canTargetItem(this.getMainHandItem())) {
-                heldItemTime = 0;
-                this.heal(4);
-                this.gameEvent(GameEvent.EAT);
-                this.playSound(SoundEvents.GENERIC_EAT, this.getSoundVolume(), this.getVoicePitch());
-                if (this.getMainHandItem().hasCraftingRemainingItem()) {
-                    this.spawnAtLocation(this.getMainHandItem().getCraftingRemainingItem());
-                }
-                if (this.getMainHandItem().getItem() == Items.GOLDEN_APPLE) {
-                    this.setGoldenTime(12000);
-                } else if (this.getMainHandItem().getItem() == Items.ENCHANTED_GOLDEN_APPLE) {
-                    this.setGoldenTime(-1);
-                    this.setEnchanted(true);
-                }
-                this.setSaplingState(getSaplingFor(this.getMainHandItem()));
-                eatItemEffect(this.getMainHandItem());
-                this.getMainHandItem().shrink(1);
-            }
-        } else {
-            heldItemTime = 0;
-        }
-        if (this.isFlying() && this.getFeetBlockState().is(Blocks.VINE)) {
-            float f = this.getYRot() * ((float) Math.PI / 180F);
-            this.setDeltaMovement(this.getDeltaMovement().add(-Mth.sin(f) * 0.2F, 0.4F, Mth.cos(f) * 0.2F));
-        }
-    }
-
-    public boolean causeFallDamage(float distance, float damageMultiplier) {
+    @Override
+    public boolean causeFallDamage(float distance, float multiplier, DamageSource source) {
         return false;
     }
 
-    protected void checkFallDamage(double y, boolean onGroundIn, BlockState state, BlockPos pos) {
+    @Override
+    protected void checkFallDamage(double y, boolean onGround, net.minecraft.world.level.block.state.BlockState state, BlockPos pos) {
     }
 
-    public boolean isFlying() {
-        return this.entityData.get(FLYING);
+    @Override
+    public int getAmbientSoundInterval() {
+        return 240;
     }
 
-    public void setFlying(boolean flying) {
-        if (flying && isBaby()) {
+    @Nullable
+    @Override
+    protected SoundEvent getAmbientSound() {
+        return SoundEvents.PARROT_AMBIENT;
+    }
+
+    @Override
+    protected SoundEvent getHurtSound(DamageSource source) {
+        return SoundEvents.PARROT_HURT;
+    }
+
+    @Override
+    protected SoundEvent getDeathSound() {
+        return SoundEvents.PARROT_DEATH;
+    }
+
+    @Override
+    protected float getSoundVolume() {
+        return 0.5F;
+    }
+
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        boolean hurt = super.hurt(source, amount);
+        if (hurt && !level().isClientSide) panicTicks = 100;
+        return hurt;
+    }
+
+    // ------------------------------------------------------------------ movement
+
+    @Override
+    public void travel(Vec3 travelVector) {
+        if (!isAlive()) {
+            super.travel(travelVector); // a dead bird just falls
             return;
         }
-        this.entityData.set(FLYING, flying);
+        move(MoverType.SELF, getDeltaMovement());
+        setDeltaMovement(getDeltaMovement().scale(0.98D));
+        calculateEntityAnimation(true);
     }
 
-    public void peck() {
-        if (this.peckProgress == 0) {
-            this.entityData.set(PECK_TICK, 7);
+    @Override
+    public void tick() {
+        super.tick();
+        if (level().isClientSide) return;
+
+        setNoGravity(!isDeadOrDying());
+        if (huntCooldown > 0) huntCooldown--;
+        if (huntDelay > 0) huntDelay--;
+        if (panicTicks > 0) panicTicks--;
+
+        Vec3 delta = getDeltaMovement();
+        if (!isDiving()) {
+            if (onGround()) { // grounded (spawn egg, knocked down): straight back up
+                setDeltaMovement(delta.x, Math.max(delta.y, 0.25D), delta.z);
+            } else if (isInWater() && !hunting) {
+                setDeltaMovement(delta.x, Math.max(delta.y, 0.12D), delta.z);
+            }
+            if (!hunting && tickCount % 10 == 0) cruiseY = getY();
         }
+
+        if (tickCount % 20 == 0 && isOverWater()) lastWaterPos = position();
+
+        tickGlide();
+        tickEating();
+
+        // Body pitch follows the flight path (vanilla convention: negative is nose-up). Written
+        // after super.tick() so it wins over the look control easing pitch back to 0.
+        double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+        float targetPitch = horizontal > 0.03D || Math.abs(delta.y) > 0.03D
+                ? (float) (-Mth.atan2(delta.y, Math.max(horizontal, 0.05D)) * (180D / Math.PI)) : 0.0F;
+        setXRot(Mth.lerp(0.25F, getXRot(), Mth.clamp(targetPitch, -60.0F, 85.0F)));
     }
 
-    public Vec3 getBlockInViewAway(Vec3 fleePos, float radiusAdd) {
-        float radius = 7 + radiusAdd + this.getRandom().nextInt(8);
-        float neg = this.getRandom().nextBoolean() ? 1 : -1;
-        float renderYawOffset = this.yBodyRot;
-        float angle = (0.01745329251F * renderYawOffset) + 3.15F + (this.getRandom().nextFloat() * neg);
-        double extraX = radius * Mth.sin((float) (Math.PI + angle));
-        double extraZ = radius * Mth.cos(angle);
-        BlockPos radialPos = new BlockPos(fleePos.x() + extraX, 0, fleePos.z() + extraZ);
-        BlockPos ground = getToucanGround(radialPos);
-        int distFromGround = (int) this.getY() - ground.getY();
-        int flightHeight = 8 + this.getRandom().nextInt(4);
-        int j = this.getRandom().nextInt(6) + 18;
-
-        BlockPos newPos = ground.above(distFromGround > 9 ? flightHeight : j);
-        if (level.getBlockState(ground).is(BlockTags.LEAVES)) {
-            newPos = ground.above(1 + this.getRandom().nextInt(3));
-        }
-        if (!this.isTargetBlocked(Vec3.atCenterOf(newPos)) && this.distanceToSqr(Vec3.atCenterOf(newPos)) > 1) {
-            return Vec3.atCenterOf(newPos);
-        }
-        return null;
+    private boolean isOverWater() {
+        BlockPos pos = blockPosition();
+        if (!level().hasChunkAt(pos)) return false;
+        int surface = level().getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ());
+        return level().getFluidState(new BlockPos(pos.getX(), surface - 1, pos.getZ())).is(FluidTags.WATER);
     }
 
-    public BlockPos getToucanGround(BlockPos in) {
-        BlockPos position = new BlockPos(in.getX(), this.getY(), in.getZ());
-        while (position.getY() < 320 && !level.getFluidState(position).isEmpty()) {
-            position = position.above();
-        }
-        while (position.getY() > -64 && !level.getBlockState(position).getMaterial().isSolidBlocking() && level.getFluidState(position).isEmpty()) {
-            position = position.below();
-        }
-        return position;
-    }
-
-    public Vec3 getBlockGrounding(Vec3 fleePos) {
-        float radius = 10 + this.getRandom().nextInt(15);
-        float neg = this.getRandom().nextBoolean() ? 1 : -1;
-        float renderYawOffset = this.yBodyRot;
-        float angle = (0.01745329251F * renderYawOffset) + 3.15F + (this.getRandom().nextFloat() * neg);
-        double extraX = radius * Mth.sin((float) (Math.PI + angle));
-        double extraZ = radius * Mth.cos(angle);
-        BlockPos radialPos = new BlockPos(fleePos.x() + extraX, getY(), fleePos.z() + extraZ);
-        BlockPos ground = this.getToucanGround(radialPos);
-        if (ground.getY() == -64) {
-            return this.position();
+    // Occasional soaring spells between wingbeats. Followers copy their leader so a flock glides
+    // together instead of flickering between animations bird by bird.
+    private void tickGlide() {
+        boolean glide;
+        if (leader != null && isLeaderValid()) {
+            glide = leader.isGliding() && !isDiving();
         } else {
-            ground = this.blockPosition();
-            while (ground.getY() > -62 && !level.getBlockState(ground).getMaterial().isSolidBlocking()) {
-                ground = ground.below();
-            }
+            if (glideTicks > 0) glideTicks--;
+            else if (!isDiving() && random.nextInt(160) == 0) glideTicks = 40 + random.nextInt(60);
+            glide = glideTicks > 0 && !isDiving();
         }
-        if (!this.isTargetBlocked(Vec3.atCenterOf(ground.above()))) {
-            return Vec3.atCenterOf(ground);
-        }
-        return null;
+        if (glide != isGliding()) entityData.set(GLIDING, glide);
     }
 
-    public boolean isTargetBlocked(Vec3 target) {
-        Vec3 Vector3d = new Vec3(this.getX(), this.getEyeY(), this.getZ());
-
-        return this.level.clip(new ClipContext(Vector3d, target, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this)).getType() != HitResult.Type.MISS;
-    }
-
-    private void switchNavigator(boolean onLand) {
-        if (onLand) {
-            this.moveControl = new MoveControl(this);
-            this.navigation = new GroundPathNavigation(this, level);
-            this.isLandNavigator = true;
-        } else {
-            this.moveControl = new FlightMoveController(this, 0.6F, false, true);
-            this.navigation = new DirectPathNavigator(this, level);
-            this.isLandNavigator = false;
-        }
-    }
-
-    public void addAdditionalSaveData(CompoundTag compound) {
-        super.addAdditionalSaveData(compound);
-        BlockState blockstate = this.getSaplingState();
-        if (blockstate != null) {
-            compound.put("SaplingState", NbtUtils.writeBlockState(blockstate));
-        }
-        compound.putInt("Variant", this.getVariant());
-        compound.putInt("GoldenTime", this.getGoldenTime());
-        compound.putBoolean("Enchanted", this.isEnchanted());
-    }
-
-    public void readAdditionalSaveData(CompoundTag compound) {
-        super.readAdditionalSaveData(compound);
-        BlockState blockstate = null;
-        if (compound.contains("SaplingState", 10)) {
-            blockstate = NbtUtils.readBlockState(compound.getCompound("SaplingState"));
-            if (blockstate.isAir()) {
-                blockstate = null;
-            }
-        }
-        this.setSaplingState(blockstate);
-        this.setVariant(compound.getInt("Variant"));
-        this.setGoldenTime(compound.getInt("GoldenTime"));
-        this.setEnchanted(compound.getBoolean("Enchanted"));
-    }
-
-    public boolean isSam() {
-        String s = ChatFormatting.stripFormatting(this.getName().getString());
-        return s != null && s.toLowerCase().contains("sam");
-    }
-
-    public int getVariant() {
-        return this.entityData.get(VARIANT).intValue();
-    }
-
-    public void setVariant(int variant) {
-        this.entityData.set(VARIANT, Integer.valueOf(variant));
-    }
-
-    public int getSaplingTime() {
-        return this.entityData.get(SAPLING_TIME).intValue();
-    }
-
-    public void setSaplingTime(int time) {
-        this.entityData.set(SAPLING_TIME, Integer.valueOf(time));
-    }
-
-    public boolean isGolden() {
-        return this.getGoldenTime() > 0 || this.getGoldenTime() == -1 || this.isEnchanted();
-    }
-
-    public int getGoldenTime() {
-        return this.entityData.get(GOLDEN_TIME).intValue();
-    }
-
-    public void setGoldenTime(int goldenTime) {
-        this.entityData.set(GOLDEN_TIME, Integer.valueOf(goldenTime));
-    }
-
-    public boolean isEnchanted() {
-        return this.entityData.get(ENCHANTED).booleanValue();
-    }
-
-    public void setEnchanted(boolean enchanted) {
-        this.entityData.set(ENCHANTED, enchanted);
-    }
-
-    @Nullable
-    public BlockState getSaplingState() {
-        return this.entityData.get(SAPLING_STATE).orElse(null);
-    }
-
-    public void setSaplingState(@Nullable BlockState state) {
-        this.entityData.set(SAPLING_STATE, Optional.ofNullable(state));
-    }
-
-    @Nullable
-    public SpawnGroupData finalizeSpawn(ServerLevelAccessor worldIn, DifficultyInstance difficultyIn, MobSpawnType reason, @Nullable SpawnGroupData spawnDataIn, @Nullable CompoundTag dataTag) {
-        this.setVariant(this.getRandom().nextInt(4));
-        return super.finalizeSpawn(worldIn, difficultyIn, reason, spawnDataIn, dataTag);
-    }
-
-    @Nullable
-    @Override
-    public AgeableMob getBreedOffspring(ServerLevel level, AgeableMob parent) {
-        PteraEntity toucan = ModEntityTypes.PTERA.get().create(level);
-        toucan.setVariant(this.getVariant());
-        return toucan;
-    }
-
-    @Override
-    public float getWalkTargetValue(BlockPos pos, LevelReader worldIn) {
-        return worldIn.getBlockState(pos).is(BlockTags.LEAVES) ? 10.0F : super.getWalkTargetValue(pos, worldIn);
-    }
-
-    private boolean isOverWaterOrVoid() {
-        BlockPos position = this.blockPosition();
-        while (position.getY() > -62 && level.isEmptyBlock(position)) {
-            position = position.below();
-        }
-        return !level.getFluidState(position).isEmpty() || level.getBlockState(position).is(Blocks.VINE) || position.getY() <= 0;
-    }
-
-    private boolean isOverLeaves() {
-        BlockPos position = this.blockPosition();
-        while (position.getY() > -62 && level.isEmptyBlock(position)) {
-            position = position.below();
-        }
-        return level.getBlockState(position).is(BlockTags.LEAVES) || level.getBlockState(position).is(Blocks.VINE);
-    }
-
-    @Override
-    public boolean canTargetItem(ItemStack stack) {
-        return this.getSaplingTime() <= 0 && getSaplingFor(stack) != null;
-    }
-
-    private void peckBlockEffect() {
-        BlockState beneath = this.getBlockStateOn();
-        if (level.isClientSide && !beneath.isAir() && beneath.getFluidState().isEmpty()) {
-            for (int i = 0; i < 2 + random.nextInt(2); i++) {
-                double d2 = this.random.nextGaussian() * 0.02D;
-                double d0 = this.random.nextGaussian() * 0.02D;
-                double d1 = this.random.nextGaussian() * 0.02D;
-                float radius = this.getBbWidth() * 0.65F;
-                float angle = (0.01745329251F * this.yBodyRot);
-                double extraX = radius * Mth.sin((float) (Math.PI + angle));
-                double extraZ = radius * Mth.cos(angle);
-                ParticleOptions data = new BlockParticleOption(ParticleTypes.BLOCK, beneath);
-                this.level.addParticle(data, this.getX() + extraX, this.getY() + 0.1F, this.getZ() + extraZ, d0, d1, d2);
+    private void tickEating() {
+        if (!hasFish()) return;
+        if (--eatTicks <= 0) {
+            entityData.set(HAS_FISH, false);
+            heal(4.0F);
+            playSound(SoundEvents.GENERIC_EAT, 0.8F, 1.2F);
+            if (level() instanceof ServerLevel server) {
+                server.sendParticles(new ItemParticleOption(ParticleTypes.ITEM, new ItemStack(Items.COD)),
+                        getX(), getY() + 0.3D, getZ(), 6, 0.2D, 0.2D, 0.2D, 0.05D);
             }
         }
     }
 
-    private void eatItemEffect(ItemStack heldItemMainhand) {
-        for (int i = 0; i < 2 + random.nextInt(2); i++) {
-            double d2 = this.random.nextGaussian() * 0.02D;
-            double d0 = this.random.nextGaussian() * 0.02D;
-            double d1 = this.random.nextGaussian() * 0.02D;
-            float radius = this.getBbWidth() * 0.65F;
-            float angle = (0.01745329251F * this.yBodyRot);
-            double extraX = radius * Mth.sin((float) (Math.PI + angle));
-            double extraZ = radius * Mth.cos(angle);
-            ParticleOptions data = new ItemParticleOption(ParticleTypes.ITEM, heldItemMainhand);
-            if (heldItemMainhand.getItem() instanceof BlockItem) {
-                data = new BlockParticleOption(ParticleTypes.BLOCK, ((BlockItem) heldItemMainhand.getItem()).getBlock().defaultBlockState());
+    // Steers by blending velocity toward the wanted point - the inertia gives flock turns their
+    // wide arcs. While diving it ignores that and goes flat out along the dive speed instead.
+    static class PteraMoveControl extends MoveControl {
+        private final PteraEntity bird;
+
+        PteraMoveControl(PteraEntity bird) {
+            super(bird);
+            this.bird = bird;
+        }
+
+        @Override
+        public void tick() {
+            if (operation != Operation.MOVE_TO) return;
+
+            Vec3 to = new Vec3(wantedX - bird.getX(), wantedY - bird.getY(), wantedZ - bird.getZ());
+            double dist = to.length();
+            if (dist < 0.8D && !bird.isDiving()) {
+                operation = Operation.WAIT;
+                return;
             }
-            this.level.addParticle(data, this.getX() + extraX, this.getY() + this.getBbHeight() * 0.6F, this.getZ() + extraZ, d0, d1, d2);
+            if (dist < 1.0E-4D) return;
+
+            Vec3 dir = to.scale(1.0D / dist);
+            if (bird.isDiving()) {
+                bird.setDeltaMovement(dir.scale(bird.diveSpeed));
+            } else {
+                double speed = speedModifier * bird.getAttributeValue(Attributes.FLYING_SPEED);
+                Vec3 velocity = bird.getDeltaMovement();
+                bird.setDeltaMovement(velocity.add(dir.scale(speed).subtract(velocity).scale(0.1D)));
+            }
+
+            Vec3 v = bird.getDeltaMovement();
+            if (v.x * v.x + v.z * v.z > 9.0E-4D) {
+                float yaw = (float) (Mth.atan2(v.z, v.x) * (180D / Math.PI)) - 90.0F;
+                bird.setYRot(rotlerp(bird.getYRot(), yaw, bird.isDiving() ? 25.0F : 10.0F));
+                bird.yBodyRot = bird.getYRot();
+                bird.yHeadRot = bird.getYRot();
+            }
+            if (bird.horizontalCollision) { // clip a hillside/tree: climb out of it
+                bird.setDeltaMovement(bird.getDeltaMovement().add(0.0D, 0.08D, 0.0D));
+            }
         }
     }
 
+    // ------------------------------------------------------------------ flock
 
-    @Override
-    public void onGetItem(ItemEntity e) {
-        ItemStack duplicate = e.getItem().copy();
-        duplicate.setCount(1);
-        if (!this.getItemInHand(InteractionHand.MAIN_HAND).isEmpty() && !this.level.isClientSide) {
-            this.spawnAtLocation(this.getItemInHand(InteractionHand.MAIN_HAND), 0.0F);
+    public void joinFlock(PteraEntity newLeader) {
+        this.leader = newLeader;
+    }
+
+    private boolean isLeaderValid() {
+        return leader != null && leader.isAlive() && !leader.isRemoved()
+                && leader.level() == level() && distanceToSqr(leader) < FLOCK_LOSE_RANGE_SQR;
+    }
+
+    private void refreshFlock() {
+        if (leader != null && !isLeaderValid()) leader = null;
+    }
+
+    private int flockMemberCount(PteraEntity head) {
+        return level().getEntitiesOfClass(PteraEntity.class, head.getBoundingBox().inflate(96.0D),
+                e -> e.leader == head).size() + 1;
+    }
+
+    private void findFlock() {
+        if (flockMemberCount(this) > 1) return; // already leading one - never orphan our own followers
+        List<PteraEntity> candidates = level().getEntitiesOfClass(PteraEntity.class,
+                getBoundingBox().inflate(FLOCK_JOIN_RANGE, 24.0D, FLOCK_JOIN_RANGE),
+                e -> e != this && e.isAlive() && e.leader == null);
+        candidates.sort(Comparator.comparingDouble(this::distanceToSqr));
+        for (PteraEntity candidate : candidates) {
+            if (flockMemberCount(candidate) < MAX_FLOCK_SIZE) {
+                leader = candidate;
+                return;
+            }
         }
-        peck();
-        this.setFlying(true);
-        this.setItemInHand(InteractionHand.MAIN_HAND, duplicate);
     }
 
-    private boolean hasLineOfSightSapling(BlockPos destinationBlock) {
-        Vec3 Vector3d = new Vec3(this.getX(), this.getEyeY(), this.getZ());
-        Vec3 blockVec = net.minecraft.world.phys.Vec3.atCenterOf(destinationBlock);
-        BlockHitResult result = this.level.clip(new ClipContext(Vector3d, blockVec, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
-        return result.getBlockPos().equals(destinationBlock);
+    private double formationY() {
+        // while the leader is off diving, hold at the altitude it left from rather than chasing it into the sea
+        return leader.isHunting() || leader.isDiving() ? leader.cruiseY : leader.getY();
     }
 
-    private class AIWanderIdle extends Goal {
-        protected final PteraEntity toucan;
-        protected double x;
-        protected double y;
-        protected double z;
-        private boolean flightTarget = false;
+    // Each follower gets a stable slot (from its UUID) in a trailing echelon behind the leader,
+    // staggered in height so the flock has depth rather than one flat line.
+    private Vec3 flockSlot() {
+        int index = Math.floorMod(getUUID().hashCode(), MAX_FLOCK_SIZE - 1);
+        int row = index / 2 + 1;
+        double side = (index % 2 == 0 ? 1 : -1) * 2.8D * row;
+        double back = 3.2D * row;
+        double vertical = ((index % 3) - 1) * 1.6D;
+        float yaw = leader.yBodyRot * ((float) Math.PI / 180F);
+        double fwdX = -Mth.sin(yaw), fwdZ = Mth.cos(yaw);
+        Vec3 lead = leader.getDeltaMovement();
+        // aim a little ahead of the slot so followers match the leader's motion instead of lagging it
+        return new Vec3(
+                leader.getX() - fwdX * back + fwdZ * side + lead.x * 6.0D,
+                formationY() + vertical,
+                leader.getZ() - fwdZ * back - fwdX * side + lead.z * 6.0D);
+    }
 
-        public AIWanderIdle() {
-            super();
-            this.setFlags(EnumSet.of(Flag.MOVE));
-            this.toucan = PteraEntity.this;
+    private class FlockFollowGoal extends Goal {
+        private int recompute;
+
+        FlockFollowGoal() {
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE));
         }
 
         @Override
         public boolean canUse() {
-            if (this.toucan.isVehicle() || toucan.getSaplingState() != null || PteraEntity.this.aiItemFlag || (toucan.getTarget() != null && toucan.getTarget().isAlive()) || this.toucan.isPassenger()) {
-                return false;
-            } else {
-                if (this.toucan.getRandom().nextInt(45) != 0 && !toucan.isFlying()) {
-                    return false;
-                }
-                if (this.toucan.isOnGround()) {
-                    this.flightTarget = random.nextInt(6) == 0;
-                } else {
-                    this.flightTarget = random.nextInt(5) != 0 && toucan.timeFlying < 200;
-                }
-
-                Vec3 lvt_1_1_ = this.getPosition();
-                if (lvt_1_1_ == null) {
-                    return false;
-                } else {
-                    this.x = lvt_1_1_.x;
-                    this.y = lvt_1_1_.y;
-                    this.z = lvt_1_1_.z;
-                    return true;
-                }
-            }
+            refreshFlock();
+            if (isPassenger()) return false; // being carried off in something's jaws
+            if (leader != null) return true;
+            if (--flockSearchDelay > 0) return false;
+            flockSearchDelay = 20 + random.nextInt(20);
+            findFlock();
+            return leader != null;
         }
 
+        @Override
+        public boolean canContinueToUse() {
+            refreshFlock();
+            return leader != null;
+        }
+
+        @Override
+        public void start() {
+            recompute = 0;
+        }
+
+        @Override
         public void tick() {
-            if (flightTarget) {
-                toucan.getMoveControl().setWantedPosition(x, y, z, 1F);
-            } else {
-                this.toucan.getNavigation().moveTo(this.x, this.y, this.z, 1F);
-            }
-            if (!flightTarget && isFlying() && toucan.onGround) {
-                toucan.setFlying(false);
-            }
-            if (isFlying() && toucan.onGround && toucan.timeFlying > 10) {
-                toucan.setFlying(false);
-            }
+            if (--recompute > 0) return;
+            recompute = 3;
+            Vec3 slot = flockSlot();
+            double dist = position().distanceTo(slot);
+            // match the leader's pace, plus a catch-up bonus the further behind we are
+            double speed = CRUISE_SPEED + Math.min(0.9D, dist * 0.05D) + (panicTicks > 0 ? 0.5D : 0.0D);
+            getMoveControl().setWantedPosition(slot.x, slot.y, slot.z, speed);
+        }
+    }
+
+    // Leaders (and lone birds) patrol from waypoint to waypoint, always over open water, at a
+    // cruising height above the surface.
+    private class FlockLeadGoal extends Goal {
+        private Vec3 waypoint;
+        private int ticks;
+
+        FlockLeadGoal() {
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE));
+        }
+
+        @Override
+        public boolean canUse() {
+            refreshFlock();
+            if (leader != null || isPassenger()) return false;
+            waypoint = findWaypoint();
+            return waypoint != null;
+        }
+
+        @Override
+        public boolean canContinueToUse() {
+            return leader == null && waypoint != null && ticks < 400 && position().distanceToSqr(waypoint) > 25.0D;
+        }
+
+        @Override
+        public void start() {
+            ticks = 0;
+        }
+
+        @Override
+        public void tick() {
+            ticks++;
+            getMoveControl().setWantedPosition(waypoint.x, waypoint.y, waypoint.z, CRUISE_SPEED + (panicTicks > 0 ? 0.5D : 0.0D));
         }
 
         @Nullable
-        protected Vec3 getPosition() {
-            Vec3 vector3d = toucan.position();
-            if (toucan.isOverWaterOrVoid()) {
-                flightTarget = true;
+        private Vec3 findWaypoint() {
+            for (int attempt = 0; attempt < 12; attempt++) {
+                // mostly keep going the way we're facing; the last few attempts try any direction
+                double spread = attempt < 8 ? 120.0D : 360.0D;
+                double heading = (getYRot() + (random.nextDouble() - 0.5D) * spread) * (Math.PI / 180.0D);
+                double dist = 24.0D + random.nextDouble() * 24.0D;
+                double x = getX() - Math.sin(heading) * dist;
+                double z = getZ() + Math.cos(heading) * dist;
+                BlockPos column = BlockPos.containing(x, getY(), z);
+                if (!level().hasChunkAt(column)) continue;
+                int surface = level().getHeight(Heightmap.Types.WORLD_SURFACE, column.getX(), column.getZ());
+                if (!level().getFluidState(new BlockPos(column.getX(), surface - 1, column.getZ())).is(FluidTags.WATER)) continue;
+                return new Vec3(x, surface + CRUISE_ALTITUDE_MIN + random.nextInt(CRUISE_ALTITUDE_VARIATION), z);
             }
-            if (flightTarget) {
-                if (toucan.timeFlying > 50 && toucan.isOverLeaves() && !toucan.isOnGround()) {
-                    return toucan.getBlockGrounding(vector3d);
-                } else if (toucan.timeFlying < 200 || toucan.isOverWaterOrVoid()) {
-                    return toucan.getBlockInViewAway(vector3d, 0);
-                } else {
-                    return toucan.getBlockGrounding(vector3d);
-                }
-            } else if (!toucan.isOnGround()) {
-                return toucan.getBlockGrounding(vector3d);
-            } else {
-                if (this.toucan.isOverLeaves()) {
-                    for (int i = 0; i < 15; i++) {
-                        BlockPos pos = this.toucan.blockPosition().offset(random.nextInt(16) - 8, random.nextInt(8) - 4, random.nextInt(16) - 8);
-                        if (!toucan.level.getBlockState(pos.above()).getMaterial().isSolid() && toucan.level.getBlockState(pos).getMaterial().isSolid() && toucan.getWalkTargetValue(pos) >= 0.0F) {
-                            return Vec3.atBottomCenterOf(pos);
-                        }
-                    }
-                }
-                return LandRandomPos.getPos(this.toucan, 16, 7);
+            if (lastWaterPos != null) { // stranded over land: head back to the sea
+                return new Vec3(lastWaterPos.x, Math.max(getY(), lastWaterPos.y + 6.0D), lastWaterPos.z);
             }
+            double heading = random.nextDouble() * Math.PI * 2.0D; // never seen water: just roam
+            return new Vec3(getX() + Math.cos(heading) * 32.0D, getY() + (random.nextDouble() - 0.5D) * 6.0D, getZ() + Math.sin(heading) * 32.0D);
         }
-
-        public boolean canContinueToUse() {
-            if (toucan.aiItemFlag) {
-                return false;
-            }
-            if (flightTarget) {
-                return toucan.isFlying() && toucan.distanceToSqr(x, y, z) > 2F;
-            } else {
-                return (!this.toucan.getNavigation().isDone()) && !this.toucan.isVehicle();
-            }
-        }
-
-        public void start() {
-            if (flightTarget) {
-                toucan.setFlying(true);
-                toucan.getMoveControl().setWantedPosition(x, y, z, 1F);
-            } else {
-                this.toucan.getNavigation().moveTo(this.x, this.y, this.z, 1F);
-            }
-        }
-
-        public void stop() {
-            this.toucan.getNavigation().stop();
-            super.stop();
-        }
-
     }
 
-    private class AIPlantTrees extends Goal {
-        protected final PteraEntity toucan;
-        protected BlockPos pos;
-        private int runCooldown = 0;
-        private int encircleTime = 0;
-        private int plantTime = 0;
-        private boolean clockwise;
+    // ------------------------------------------------------------------ hunting
 
-        public AIPlantTrees() {
-            super();
-            this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
-            this.toucan = PteraEntity.this;
+    private boolean isPreyType(LivingEntity e) {
+        if (!e.isAlive() || e.getVehicle() != null || e.getBbWidth() > 1.2F || e.getBbHeight() > 1.2F) return false;
+        if (e instanceof ArmoredFishEntity) return false; // off the menu
+        return (e instanceof AbstractFish || e instanceof Squid) && e.isInWater();
+    }
+
+    // Y of the water surface above e, or Integer.MIN_VALUE if it's too deep, under cover, or not near the surface.
+    private int surfaceAbove(LivingEntity e) {
+        BlockPos.MutableBlockPos pos = e.blockPosition().mutable();
+        int depth = 0;
+        while (depth <= PREY_MAX_DEPTH && level().getFluidState(pos).is(FluidTags.WATER)) {
+            pos.move(0, 1, 0);
+            depth++;
+        }
+        if (depth > PREY_MAX_DEPTH || !level().getBlockState(pos).isAir() || !level().getBlockState(pos.above()).isAir()) {
+            return Integer.MIN_VALUE;
+        }
+        return pos.getY();
+    }
+
+    // Gannet hunt: line up high over a fish near the surface, fold and plunge onto it, then climb
+    // out with the catch. A dive sets the rest of the flock hunting too.
+    private class DiveHuntGoal extends Goal {
+        private static final int POSITION = 0, DIVE = 1, CLIMB = 2;
+
+        private LivingEntity prey;
+        private int surfaceY;
+        private int phase;
+        private int phaseTicks;
+        private int waterTicks;
+        private int scanDelay;
+        private boolean cooledDown;
+
+        DiveHuntGoal() {
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
         }
 
         @Override
         public boolean canUse() {
-            if (toucan.getSaplingState() != null) {
-                if (runCooldown-- <= 0) {
-                    BlockPos target = getSaplingPlantPos();
-                    runCooldown = resetCooldown();
-                    if (target != null) {
-                        pos = target;
-                        clockwise = random.nextBoolean();
-                        encircleTime = (toucan.isGolden() ? 20 : 100) + random.nextInt(100);
-                        return true;
-                    }
-                }
-            }
-            return false;
+            if (huntCooldown > 0 || huntDelay > 0 || hasFish() || panicTicks > 0 || !isAlive() || onGround() || isPassenger()) return false;
+            if (--scanDelay > 0) return false;
+            scanDelay = 10 + random.nextInt(10);
+            return findPrey();
         }
 
-        private int resetCooldown() {
-            return toucan.isGolden() && !toucan.isEnchanted() ? 50 + random.nextInt(40) : 200 + random.nextInt(200);
-        }
-
-        public void tick() {
-            toucan.aiItemFlag = true;
-            double up = 3.0;
-            if (encircleTime > 0) {
-                encircleTime--;
-            }
-            if (isWithinXZDist(pos, toucan.position(), 5) && encircleTime <= 0) {
-                up = 0.0D;
-            }
-            if (toucan.distanceToSqr(Vec3.atCenterOf(pos)) < 3.0D) {
-                toucan.setFlying(false);
-                toucan.peck();
-                plantTime++;
-                if (plantTime > 60) {
-                    BlockState state = toucan.getSaplingState();
-                    if (state != null) {
-                        if (state.canSurvive(toucan.level, pos) && toucan.level.getBlockState(pos).getMaterial().isReplaceable()) {
-                            toucan.level.setBlockAndUpdate(pos, state);
-                            if (!toucan.isEnchanted()) {
-                                toucan.setSaplingState(null);
-                            }
-                        }
-                    }
-                    stop();
-                }
-            } else {
-                BlockPos moveTo = pos;
-
-                if (encircleTime > 0) {
-                    moveTo = getVultureCirclePos(pos, 3, up);
-                }
-                if (moveTo != null) {
-                    if (encircleTime <= 0 && !toucan.hasLineOfSightSapling(pos)) {
-                        toucan.setFlying(false);
-                        toucan.getNavigation().moveTo(moveTo.getX() + 0.5F, moveTo.getY() + up + 0.5F, moveTo.getZ() + 0.5F, 1F);
-                    } else {
-                        toucan.setFlying(true);
-                        toucan.getMoveControl().setWantedPosition(moveTo.getX() + 0.5F, moveTo.getY() + up + 0.5F, moveTo.getZ() + 0.5F, 1F);
-                    }
-                }
-            }
-        }
-
-        public BlockPos getVultureCirclePos(BlockPos target, float circleDistance, double yLevel) {
-            float angle = (0.01745329251F * 8 * (clockwise ? -encircleTime : encircleTime));
-            double extraX = circleDistance * Mth.sin((angle));
-            double extraZ = circleDistance * Mth.cos(angle);
-            BlockPos pos = new BlockPos(target.getX() + 0.5F + extraX, target.getY() + 1 + yLevel, target.getZ() + 0.5F + extraZ);
-            if (toucan.level.isEmptyBlock(pos)) {
-                return pos;
-            }
-            return null;
-        }
-
-        public void stop() {
-            toucan.aiItemFlag = false;
-            pos = null;
-            plantTime = 0;
-            encircleTime = 0;
-        }
-
+        @Override
         public boolean canContinueToUse() {
-            return pos != null && toucan.getSaplingState() != null;
+            if (phase == CLIMB) return phaseTicks < 40 && getY() < surfaceY + 10;
+            return prey != null && prey.isAlive() && !prey.isRemoved() && distanceToSqr(prey) < 48.0D * 48.0D;
         }
 
-        private boolean isWithinXZDist(BlockPos blockpos, Vec3 positionVec, double distance) {
-            return blockpos.distSqr(new BlockPos(positionVec.x(), blockpos.getY(), positionVec.z())) < distance * distance;
+        @Override
+        public void start() {
+            hunting = true;
+            phase = POSITION;
+            phaseTicks = 0;
+            waterTicks = 0;
+            cooledDown = false;
         }
 
-        private BlockPos getSaplingPlantPos() {
-            BlockState state = toucan.getSaplingState();
-            if (state != null) {
-                for (int i = 0; i < 15; i++) {
-                    BlockPos pos = this.toucan.blockPosition().offset(random.nextInt(10) - 8, random.nextInt(8) - 4, random.nextInt(16) - 8);
-                    if (state.canSurvive(toucan.level, pos) && toucan.level.isEmptyBlock(pos.above()) && toucan.hasLineOfSightSapling(pos)) {
-                        return pos;
+        @Override
+        public void stop() {
+            entityData.set(DIVING, false);
+            diveSpeed = 0.0F;
+            hunting = false;
+            prey = null;
+            if (!cooledDown) huntCooldown = 100 + random.nextInt(100);
+        }
+
+        @Override
+        public void tick() {
+            phaseTicks++;
+            switch (phase) {
+                case POSITION -> {
+                    Vec3 above = new Vec3(prey.getX(), surfaceY + DIVE_ALTITUDE, prey.getZ());
+                    getMoveControl().setWantedPosition(above.x, above.y, above.z, 1.3D);
+                    getLookControl().setLookAt(prey, 30.0F, 30.0F);
+                    double horizontal = Math.sqrt(distanceToSqr(prey.getX(), getY(), prey.getZ()));
+                    if (horizontal < 7.0D && getY() > surfaceY + 8.0D) startDive();
+                    else if (phaseTicks > 200) startClimb(false);
+                }
+                case DIVE -> {
+                    diveSpeed = Math.min(DIVE_MAX_SPEED, diveSpeed + DIVE_ACCEL);
+                    // lead the target a little - fish keep moving while we fall
+                    Vec3 aim = prey.position().add(0.0D, prey.getBbHeight() * 0.5D, 0.0D).add(prey.getDeltaMovement().scale(4.0D));
+                    getMoveControl().setWantedPosition(aim.x, aim.y, aim.z, 1.0D);
+                    getLookControl().setLookAt(prey, 30.0F, 30.0F);
+                    if (getBoundingBox().inflate(0.7D).intersects(prey.getBoundingBox())) {
+                        catchPrey();
+                        startClimb(true);
+                    } else if (isInWater() && getY() < surfaceY - 4.0D) {
+                        startClimb(false); // plunged in and missed
+                    } else if (phaseTicks > 90 || getY() < prey.getY() - 3.0D) {
+                        startClimb(false);
                     }
                 }
+                default -> {
+                    Vec3 forward = Vec3.directionFromRotation(0.0F, getYRot()).scale(8.0D);
+                    getMoveControl().setWantedPosition(getX() + forward.x, surfaceY + 14.0D, getZ() + forward.z, 1.2D);
+                }
             }
-            return null;
         }
+
+        private boolean findPrey() {
+            AABB area = new AABB(getX() - PREY_SCAN_RANGE, getY() - 40.0D, getZ() - PREY_SCAN_RANGE,
+                    getX() + PREY_SCAN_RANGE, getY() + 2.0D, getZ() + PREY_SCAN_RANGE);
+            LivingEntity best = null;
+            int bestSurface = 0;
+            double bestDist = Double.MAX_VALUE;
+            for (LivingEntity candidate : level().getEntitiesOfClass(LivingEntity.class, area, PteraEntity.this::isPreyType)) {
+                int surface = surfaceAbove(candidate);
+                if (surface == Integer.MIN_VALUE) continue;
+                double dist = distanceToSqr(candidate.getX(), getY(), candidate.getZ());
+                if (dist < bestDist) {
+                    best = candidate;
+                    bestSurface = surface;
+                    bestDist = dist;
+                }
+            }
+            if (best == null) return false;
+            prey = best;
+            surfaceY = bestSurface;
+            return true;
+        }
+
+        private void startDive() {
+            phase = DIVE;
+            phaseTicks = 0;
+            waterTicks = 0;
+            diveSpeed = Math.max(DIVE_START_SPEED, (float) getDeltaMovement().length());
+            entityData.set(DIVING, true);
+            playSound(SoundEvents.PHANTOM_SWOOP, 0.6F, 1.4F);
+
+            // feeding frenzy: nearby flock-mates that are due a meal go for the same shoal
+            PteraEntity head = leader != null ? leader : PteraEntity.this;
+            for (PteraEntity mate : level().getEntitiesOfClass(PteraEntity.class, getBoundingBox().inflate(24.0D),
+                    o -> o != PteraEntity.this && o.isAlive() && (o == head || o.leader == head))) {
+                if (!mate.hunting && !mate.hasFish() && mate.huntCooldown < 600) {
+                    mate.huntCooldown = 0;
+                    mate.huntDelay = 5 + random.nextInt(30);
+                }
+            }
+        }
+
+        private void startClimb(boolean caught) {
+            entityData.set(DIVING, false);
+            diveSpeed = 0.0F;
+            // Kill the plunge: the velocity blend alone would take ~10 ticks (several blocks of
+            // depth) to reverse a dive-speed fall, so turn it straight into a climb-out.
+            Vec3 momentum = getDeltaMovement();
+            setDeltaMovement(momentum.x * 0.3D, 0.35D, momentum.z * 0.3D);
+            phase = CLIMB;
+            phaseTicks = 0;
+            cooledDown = true;
+            huntCooldown = caught ? 400 + random.nextInt(300) : 120 + random.nextInt(120);
+        }
+
+        private void catchPrey() {
+            if (level() instanceof ServerLevel server) {
+                server.sendParticles(ParticleTypes.SPLASH, prey.getX(), prey.getY() + prey.getBbHeight(), prey.getZ(), 20, 0.4D, 0.1D, 0.4D, 0.2D);
+                server.sendParticles(ParticleTypes.BUBBLE, prey.getX(), prey.getY(), prey.getZ(), 8, 0.3D, 0.2D, 0.3D, 0.05D);
+            }
+            playSound(SoundEvents.GENERIC_SPLASH, 0.8F, 1.1F);
+            prey.discard(); // swallowed whole - no drops, so flocks aren't a fish farm
+            entityData.set(HAS_FISH, true);
+            eatTicks = EAT_TICKS;
+        }
+    }
+
+    @Override
+    protected void registerGoals() {
+        this.goalSelector.addGoal(1, new DiveHuntGoal());
+        this.goalSelector.addGoal(3, new FlockFollowGoal());
+        this.goalSelector.addGoal(4, new FlockLeadGoal());
     }
 }

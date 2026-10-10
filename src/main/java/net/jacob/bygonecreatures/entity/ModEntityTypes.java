@@ -28,7 +28,7 @@ public class ModEntityTypes {
 
     public static final RegistryObject<EntityType<CephaEntity>> CEPHALASPIS =
             ENTITY_TYPES.register("cephalaspis",
-                    () -> EntityType.Builder.of(CephaEntity::new, MobCategory.WATER_CREATURE)
+                    () -> EntityType.Builder.of(CephaEntity::new, MobCategory.WATER_AMBIENT)
                             .sized(0.8f, 0.6f)
                             .build(new ResourceLocation(BygoneCreatures.MOD_ID, "cephalaspis").toString()));
     public static final RegistryObject<EntityType<TerrorBirdEntity>> TERRORBIRD =
@@ -116,7 +116,8 @@ public class ModEntityTypes {
     public static final RegistryObject<EntityType<PteraEntity>> PTERA =
             ENTITY_TYPES.register("ptera",
                     () -> EntityType.Builder.of(PteraEntity::new, MobCategory.CREATURE)
-                            .sized(0.45f, 0.45f)
+                            .sized(1.2f, 0.9f)
+                            .clientTrackingRange(10)
                             .build(new ResourceLocation(BygoneCreatures.MOD_ID, "ptera").toString()));
 
     public static final RegistryObject<EntityType<BearEntity>> BEAR =

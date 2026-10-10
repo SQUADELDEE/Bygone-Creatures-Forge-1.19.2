@@ -4,27 +4,23 @@ import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.block.client.AnimatedBlockRenderer;
 import net.jacob.bygonecreatures.block.entity.ModBlockEntities;
 import net.jacob.bygonecreatures.entity.ModEntityTypes;
+import net.jacob.bygonecreatures.entity.ModParticleTypes;
 import net.jacob.bygonecreatures.entity.client.*;
-import net.jacob.bygonecreatures.entity.client.armor.BreatherSetRenderer;
-import net.jacob.bygonecreatures.entity.client.armor.DragonflyBootsRenderer;
-import net.jacob.bygonecreatures.entity.client.armor.FinsRenderer;
 import net.jacob.bygonecreatures.entity.custom.*;
-import net.jacob.bygonecreatures.item.client.custom.BreatherSet;
-import net.jacob.bygonecreatures.item.client.custom.DragonflyBootsItem;
-import net.jacob.bygonecreatures.item.client.custom.FinSet;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
+import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
+import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
+import net.minecraftforge.client.event.RegisterParticleProvidersEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import software.bernie.geckolib3.renderers.geo.GeoArmorRenderer;
 
 public class ModBusEvents {
 
-
-
-    @Mod.EventBusSubscriber(modid = BygoneCreatures.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
-    public static class ClientModEvents
+    @Mod.EventBusSubscriber(modid = BygoneCreatures.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD)
+    public static class CommonModEvents
     {
         @SubscribeEvent
         public static void entityAttributeEvent(EntityAttributeCreationEvent event) {
@@ -48,7 +44,11 @@ public class ModBusEvents {
             event.put(ModEntityTypes.BEAR.get(), BearEntity.setAttributes().build());
             event.put(ModEntityTypes.PECCARY.get(), PeccaryEntity.setAttributes().build());
         }
+    }
 
+    @Mod.EventBusSubscriber(modid = BygoneCreatures.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+    public static class ClientModEvents
+    {
         @SubscribeEvent
         public static void entityRenderers(EntityRenderersEvent.RegisterRenderers event){
             event.registerEntityRenderer(ModEntityTypes.DODO.get(), DodoRenderer::new);
@@ -74,27 +74,27 @@ public class ModBusEvents {
 
 
         @SubscribeEvent
-        public static void registerArmorRenderers(final EntityRenderersEvent.AddLayers event) {
-            GeoArmorRenderer.registerArmorRenderer(DragonflyBootsItem.class, new DragonflyBootsRenderer());
-            GeoArmorRenderer.registerArmorRenderer(BreatherSet.class, new BreatherSetRenderer());
-            GeoArmorRenderer.registerArmorRenderer(FinSet.class, new FinsRenderer());
-        }
-
-        @SubscribeEvent
-        public static void registerRenderers(final EntityRenderersEvent.RegisterRenderers event) {
+        public static void registerBlockEntityRenderers(final EntityRenderersEvent.RegisterRenderers event) {
             event.registerBlockEntityRenderer(ModBlockEntities.ANIMATED_BLOCK_ENTITY.get(), AnimatedBlockRenderer::new);
         }
 
+        @SubscribeEvent
+        public static void registerGuiOverlays(RegisterGuiOverlaysEvent event) {
+            event.registerAbove(VanillaGuiOverlay.HOTBAR.id(), "argen_dive_hint", new ArgenDiveHud());
+            event.registerAbove(VanillaGuiOverlay.HOTBAR.id(), "bear_ability_hint", new BearAbilityHud());
+        }
 
+        @SubscribeEvent
+        public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
+            event.register(KeyMap.DIVE_ATTACK);
+            event.register(KeyMap.BEAR_ROAR);
+            event.register(KeyMap.BEAR_CHARGE);
+            event.register(KeyMap.BEAR_POUND);
+        }
 
-
-
-
-
-
-
-
-
-
+        @SubscribeEvent
+        public static void registerParticles(RegisterParticleProvidersEvent event) {
+            event.registerSpriteSet(ModParticleTypes.ROAR_SHRIEK.get(), RoarShriekParticle.Provider::new);
+        }
     }
 }

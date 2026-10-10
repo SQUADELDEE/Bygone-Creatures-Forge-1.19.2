@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/glypto.png"],
-      "title": "Glyptodon"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:glyptodon{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Glyptodon",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:smelting",
@@ -19,13 +19,13 @@
       "type": "patchouli:crafting",
       "recipe": "bygonecreatures:bone_meal",
       "recipe2": "bygonecreatures:wheatonastick"
-
     },
     {
       "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/saddled.png"],
+      "images": [
+        "bygonecreatures:textures/icon/saddled.png"
+      ],
       "text": "A saddled glytpodon with an inventory."
-
     }
   ]
 }

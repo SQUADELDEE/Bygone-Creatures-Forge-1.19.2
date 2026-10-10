@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import net.jacob.bygonecreatures.block.ModBlocks;
 import net.jacob.bygonecreatures.block.entity.ModBlockEntities;
 import net.jacob.bygonecreatures.entity.ModEntityTypes;
+import net.jacob.bygonecreatures.entity.ModParticleTypes;
 import net.jacob.bygonecreatures.entity.client.network.LuggageNetworkHandler;
 import net.jacob.bygonecreatures.entity.custom.AukEntity;
 import net.jacob.bygonecreatures.entity.custom.BearEntity;
@@ -11,21 +12,19 @@ import net.jacob.bygonecreatures.entity.custom.DragonflyEntity;
 import net.jacob.bygonecreatures.entity.custom.ProtoceratopsEntity;
 import net.jacob.bygonecreatures.entity.util.BCConfig;
 import net.jacob.bygonecreatures.item.ModItems;
-import net.jacob.bygonecreatures.world.feature.tree.ModConfiguredFeatures;
-import net.jacob.bygonecreatures.world.feature.tree.ModPlacedFeatures;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.SpawnPlacements;
 import net.minecraft.world.entity.animal.AbstractFish;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.animal.WaterAnimal;
+import net.jacob.bygonecreatures.item.ModCreativeModeTab;
 import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.Material;
+import net.minecraft.world.level.material.MapColor;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -41,7 +40,7 @@ import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
 import org.slf4j.Logger;
-import software.bernie.geckolib3.GeckoLib;
+import software.bernie.geckolib.GeckoLib;
 
 // The value here should match an entry in the META-INF/mods.toml file
 @Mod(BygoneCreatures.MOD_ID)
@@ -59,9 +58,9 @@ public class BygoneCreatures
 
 
     // Creates a new Block with the id "bygonecreatures:example_block", combining the namespace and path
-    public static final RegistryObject<Block> EXAMPLE_BLOCK = BLOCKS.register("example_block", () -> new Block(BlockBehaviour.Properties.of(Material.STONE)));
+    public static final RegistryObject<Block> EXAMPLE_BLOCK = BLOCKS.register("example_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.STONE)));
     // Creates a new BlockItem with the id "bygonecreatures:example_block", combining the namespace and path
-    public static final RegistryObject<Item> EXAMPLE_BLOCK_ITEM = ITEMS.register("example_block", () -> new BlockItem(EXAMPLE_BLOCK.get(), new Item.Properties().tab(CreativeModeTab.TAB_BUILDING_BLOCKS)));
+    public static final RegistryObject<Item> EXAMPLE_BLOCK_ITEM = ITEMS.register("example_block", () -> new BlockItem(EXAMPLE_BLOCK.get(), new Item.Properties()));
 
     public BygoneCreatures()
     {
@@ -69,9 +68,9 @@ public class BygoneCreatures
 
         ModItems.register(modEventBus);
         ModBlocks.register(modEventBus);
+        net.jacob.bygonecreatures.worldgen.ModFeatures.register(modEventBus);
+        ModCreativeModeTab.register(modEventBus);
 
-        ModConfiguredFeatures.register(modEventBus);
-        ModPlacedFeatures.register(modEventBus);
 
         ModBlockEntities.register(modEventBus);
 
@@ -90,6 +89,7 @@ public class BygoneCreatures
 
         GeckoLib.initialize();
         ModEntityTypes.register(modEventBus);
+        ModParticleTypes.register(modEventBus);
 
 
     
@@ -142,8 +142,8 @@ public class BygoneCreatures
 //                            DragonflyEntity::checkDragonflySpawnRules);
 
                     SpawnPlacements.register(ModEntityTypes.CEPHALASPIS.get(),
-                        SpawnPlacements.Type.IN_WATER, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-                        AbstractFish::checkSurfaceWaterAnimalSpawnRules);
+                        SpawnPlacements.Type.IN_WATER, Heightmap.Types.OCEAN_FLOOR,
+                        net.jacob.bygonecreatures.entity.custom.CephaEntity::checkSeabedSpawnRules);
 
 
             SpawnPlacements.register(ModEntityTypes.ANOMALOCARIS.get(),

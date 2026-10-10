@@ -24,7 +24,6 @@ import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.*;
 import net.minecraft.world.entity.ai.navigation.FlyingPathNavigation;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.animal.Rabbit;
 import net.minecraft.world.entity.monster.Husk;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.level.ClipContext;
@@ -35,35 +34,29 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.pathfinder.BlockPathTypes;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import software.bernie.geckolib3.core.AnimationState;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nullable;
 import java.util.EnumSet;
 import java.util.UUID;
 import java.util.function.Predicate;
 
-public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
+public class DragonflyEntity extends Animal implements GeoEntity, NeutralMob{
     private static final EntityDataAccessor<Integer> ATTACK_TICK = SynchedEntityData.defineId(DragonflyEntity.class, EntityDataSerializers.INT);
     private BlockPos targetPosition;
 
-    public static final Predicate<LivingEntity> PREY_SELECTOR = (p_30437_) -> {
-        EntityType<?> entitytype = p_30437_.getType();
-        return entitytype ==  EntityType.RABBIT;
-    };
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
 
     public static boolean checkDragonflySpawnRules(EntityType<DragonflyEntity> type, LevelAccessor level, MobSpawnType spawnType, BlockPos pos, RandomSource random) {
         return isBrightEnoughToSpawn(level, pos);
-//        level.getBlockState(pos.below()).is(BlockTags.SAND) &&
+//        level().getBlockState(pos.below()).is(BlockTags.SAND) &&
     }
 
 
@@ -91,13 +84,13 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
       this.setPathfindingMalus(BlockPathTypes.OPEN, 0.0F);
       this.moveControl = new FlyingMoveControl(this, 5, true);
       this.navigation = new FlyingPathNavigation(this, level);
-//      this.maxUpStep = 1.0F;
+//      this.maxUpStep() = 1.0F;
     }
 
     @Nullable
     @Override
     public AgeableMob getBreedOffspring(ServerLevel severLevel, AgeableMob mob) {
-        return ModEntityTypes.DRAGONFLY.get().create(level);
+        return ModEntityTypes.DRAGONFLY.get().create(level());
     }
 
 
@@ -109,7 +102,6 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
         this.goalSelector.addGoal(6, new AIFlyIdle());
         this.goalSelector.addGoal(2, new AvoidEntityGoal<>(this, Husk.class, 8.0F, 1.6D, 1.4D, EntitySelector.NO_SPECTATORS::test));
         this.goalSelector.addGoal(0, new MeleeAttackGoal(this, 1.0D, true));
-        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Rabbit.class, true));
 
     }
 
@@ -123,7 +115,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 //            this.moveControl = new FlyingMoveControl(this, 5, true);
 //            this.navigation = new FlyingPathNavigation(this, level) {
 //                public boolean isStableDestination(BlockPos pos) {
-//                    return !this.level.getBlockState(pos.below(2)).isAir();
+//                    return !this.level().getBlockState(pos.below(2)).isAir();
 //                }
 //            };
 //            navigation.setCanFloat(false);
@@ -142,7 +134,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 //    public void tick() {
 //        super.tick();
 //        this.prevFlyProgress = flyProgress;
-//        if (!this.level.isClientSide()) {
+//        if (!this.level().isClientSide()) {
 //            if (this.getAttackTick() > 0) this.getEntityData().set(ATTACK_TICK, this.getAttackTick() - 1);
 //
 //
@@ -166,7 +158,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 //        if (this.ringBufferIndex == this.ringBuffer.length) {
 //            this.ringBufferIndex = 0;
 //        }
-//        if (!level.isClientSide) {
+//        if (!level().isClientSide) {
 //            if (isFlying() && this.isLandNavigator) {
 //                switchNavigator(false);
 //            }
@@ -174,12 +166,12 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 //                switchNavigator(true);
 //            }
 //            if (this.isFlying()) {
-//                if (this.isFlying() && !this.onGround) {
+//                if (this.isFlying() && !this.onGround()) {
 //                    if (!this.isInWaterOrBubble()) {
 //                        this.setDeltaMovement(this.getDeltaMovement().multiply(1F, 0.6F, 1F));
 //                    }
 //                }
-//                if (this.isOnGround() && timeFlying > 20) {
+//                if (this.onGround() && timeFlying > 20) {
 //                    this.setFlying(false);
 //                }
 //                this.timeFlying++;
@@ -196,7 +188,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
     @Override
     public boolean isInvulnerableTo(DamageSource source) {
-        return source == DamageSource.IN_WALL || source == DamageSource.FALLING_BLOCK || super.isInvulnerableTo(source);
+        return source.is(net.minecraft.world.damagesource.DamageTypes.IN_WALL) || source.is(net.minecraft.world.damagesource.DamageTypes.FALLING_BLOCK) || super.isInvulnerableTo(source);
     }
 
     public boolean isFlying() {
@@ -217,7 +209,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
         double x = pos.getX() + 0.5F;
         double y = pos.getY() + 0.5F;
         double z = pos.getZ() + 0.5F;
-        HitResult result = this.level.clip(new ClipContext(new Vec3(this.getX(), this.getY() + (double) this.getEyeHeight(), this.getZ()), new Vec3(x, y, z), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
+        HitResult result = this.level().clip(new ClipContext(new Vec3(this.getX(), this.getY() + (double) this.getEyeHeight(), this.getZ()), new Vec3(x, y, z), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this));
         double dist = result.getLocation().distanceToSqr(x, y, z);
         return dist <= 1.0D || result.getType() == HitResult.Type.MISS;
     }
@@ -245,13 +237,13 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
         float angle = (0.01745329251F * renderYawOffset) + 3.15F + (this.getRandom().nextFloat() * neg);
         double extraX = radius * Mth.sin((float) (Math.PI + angle));
         double extraZ = radius * Mth.cos(angle);
-        BlockPos radialPos = new BlockPos(fleePos.x() + extraX, getY(), fleePos.z() + extraZ);
+        BlockPos radialPos = BlockPos.containing(fleePos.x() + extraX, getY(), fleePos.z() + extraZ);
         BlockPos ground = this.getAnuroGround(radialPos);
         if (ground.getY() < -64) {
             return null;
         } else {
             ground = this.blockPosition();
-            while (ground.getY() > -64 && !level.getBlockState(ground).getMaterial().isSolidBlocking()) {
+            while (ground.getY() > -64 && !level().getBlockState(ground).isSolid()) {
                 ground = ground.below();
             }
         }
@@ -264,7 +256,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
     public boolean isTargetBlocked(Vec3 target) {
         Vec3 Vector3d = new Vec3(this.getX(), this.getEyeY(), this.getZ());
 
-        return this.level.clip(new ClipContext(Vector3d, target, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this)).getType() != HitResult.Type.MISS;
+        return this.level().clip(new ClipContext(Vector3d, target, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this)).getType() != HitResult.Type.MISS;
     }
 
     public Vec3 getBlockInViewAway(Vec3 fleePos, float radiusAdd) {
@@ -274,7 +266,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
         float angle = (0.01745329251F * renderYawOffset) + 3.15F + (this.getRandom().nextFloat() * neg);
         double extraX = radius * Mth.sin((float) (Math.PI + angle));
         double extraZ = radius * Mth.cos(angle);
-        BlockPos radialPos = new BlockPos(fleePos.x() + extraX, 0, fleePos.z() + extraZ);
+        BlockPos radialPos = BlockPos.containing(fleePos.x() + extraX, 0, fleePos.z() + extraZ);
         BlockPos ground = getAnuroGround(radialPos);
         int distFromGround = (int) this.getY() - ground.getY();
         int flightHeight = 5 + this.getRandom().nextInt(5);
@@ -296,18 +288,18 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
     private boolean isOverWaterOrVoid() {
         BlockPos position = this.blockPosition();
-        while (position.getY() > -65 && level.isEmptyBlock(position)) {
+        while (position.getY() > -65 && level().isEmptyBlock(position)) {
             position = position.below();
         }
-        return !level.getFluidState(position).isEmpty() || level.getBlockState(position).is(Blocks.VINE) || position.getY() <= -65;
+        return !level().getFluidState(position).isEmpty() || level().getBlockState(position).is(Blocks.VINE) || position.getY() <= -65;
     }
 
     public BlockPos getAnuroGround(BlockPos in) {
-        BlockPos position = new BlockPos(in.getX(), this.getY(), in.getZ());
-        while (position.getY() < 320 && !level.getFluidState(position).isEmpty()) {
+        BlockPos position = BlockPos.containing(in.getX(), this.getY(), in.getZ());
+        while (position.getY() < 320 && !level().getFluidState(position).isEmpty()) {
             position = position.above();
         }
-        while (position.getY() > -64 && !level.getBlockState(position).getMaterial().isSolidBlocking() && level.getFluidState(position).isEmpty()) {
+        while (position.getY() > -64 && !level().getBlockState(position).isSolid() && level().getFluidState(position).isEmpty()) {
             position = position.below();
         }
         return position;
@@ -320,32 +312,32 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && (this.isOnGround())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<DragonflyEntity> state) {
+        if (state.isMoving() && (this.onGround())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
 
-        if (!(this.isOnGround())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("fly", ILoopType.EDefaultLoopTypes.LOOP));
+        if (!(this.onGround())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("fly"));
             return PlayState.CONTINUE;
         }
 
         if (this.getAttackTick() > 0){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("attack", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("attack"));
             return PlayState.CONTINUE;
         }
 
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
-    private PlayState attackPredicate(AnimationEvent event) {
+    private PlayState attackPredicate(AnimationState<DragonflyEntity> state) {
 
-        if(this.swinging && event.getController().getAnimationState().equals(AnimationState.Stopped)) {
-            event.getController().markNeedsReload();
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("bite", ILoopType.EDefaultLoopTypes.PLAY_ONCE));
+        if(this.swinging && state.getController().getAnimationState().equals(AnimationController.State.STOPPED)) {
+            state.getController().forceAnimationReset();
+            state.getController().setAnimation(RawAnimation.begin().thenPlay("bite"));
             this.swinging = false;
         }
 
@@ -386,7 +378,7 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
         public void tick() {
             DragonflyEntity.this.getMoveControl().setWantedPosition(this.x, this.y, this.z, 1F);
-            if (isFlying() && DragonflyEntity.this.onGround && DragonflyEntity.this.timeFlying > 10) {
+            if (isFlying() && DragonflyEntity.this.onGround() && DragonflyEntity.this.timeFlying > 10) {
                 DragonflyEntity.this.setFlying(false);
             }
         }
@@ -517,10 +509,10 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
-        data.addAnimationController(new AnimationController(this, "attackController",
+        controllers.add(new AnimationController<>(this, "attackController",
                 0, this::attackPredicate));
 
     }
@@ -529,8 +521,8 @@ public class DragonflyEntity extends Animal implements IAnimatable, NeutralMob{
 
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
     protected void playStepSound(BlockPos pos, BlockState blockIn) {

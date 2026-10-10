@@ -25,8 +25,8 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 //    }
 //
 //    private static List<ItemStack> getItemStacks(MouseEntity platypus) {
-//        LootTable loottable = platypus.level.getServer().getLootTables().get(platypus.superCharged ? PLATYPUS_REWARD_CHARGED : PLATYPUS_REWARD);
-//        return loottable.getRandomItems((new LootContext.Builder((ServerLevel) platypus.level)).withParameter(LootContextParams.THIS_ENTITY, platypus).withRandom(platypus.level.random).create(LootContextParamSets.PIGLIN_BARTER));
+//        LootTable loottable = platypus.level().getServer().getLootTables().get(platypus.superCharged ? PLATYPUS_REWARD_CHARGED : PLATYPUS_REWARD);
+//        return loottable.getRandomItems((new LootContext.Builder((ServerLevel) platypus.level())).withParameter(LootContextParams.THIS_ENTITY, platypus).withRandom(platypus.level().random).create(LootContextParamSets.PIGLIN_BARTER));
 //    }
 //
 //    @Override
@@ -47,7 +47,7 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 //    }
 //
 //    public boolean canContinueToUse() {
-//        return platypus.getTarget() == null && platypus.isSensing() && platypus.getLastHurtByMob() == null && digPos != null && platypus.level.getBlockState(digPos).getBlock() == Blocks.CLAY && platypus.level.getFluidState(digPos.above()).is(FluidTags.WATER);
+//        return platypus.getTarget() == null && platypus.isSensing() && platypus.getLastHurtByMob() == null && digPos != null && platypus.level().getBlockState(digPos).getBlock() == Blocks.CLAY && platypus.level().getFluidState(digPos.above()).is(FluidTags.WATER);
 //    }
 //
 //    public void tick() {
@@ -61,7 +61,7 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 //            platypus.getNavigation().stop();
 //            digTime++;
 //            if (digTime % 5 == 0) {
-//                SoundEvent sound = platypus.level.getBlockState(digPos).getSoundType().getHitSound();
+//                SoundEvent sound = platypus.level().getBlockState(digPos).getSoundType().getHitSound();
 //                platypus.gameEvent(GameEvent.BLOCK_ACTIVATE);
 //                platypus.playSound(sound, 1, 0.5F + platypus.getRandom().nextFloat() * 0.5F);
 //            }
@@ -102,7 +102,7 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 //    }
 //
 //    private BlockPos genSeafloorPos(BlockPos parent) {
-//        LevelAccessor world = platypus.level;
+//        LevelAccessor world = platypus.level();
 //        final RandomSource random = this.platypus.getRandom();
 //        int range = 15;
 //        for (int i = 0; i < 15; i++) {
@@ -126,10 +126,10 @@ import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 //        } else {
 //            for (int i = 0; i < 15; i++) {
 //                BlockPos blockpos1 = this.platypus.blockPosition().offset(random.nextInt(range) - range / 2, 3, random.nextInt(range) - range / 2);
-//                while (this.platypus.level.isEmptyBlock(blockpos1) && blockpos1.getY() > 1) {
+//                while (this.platypus.level().isEmptyBlock(blockpos1) && blockpos1.getY() > 1) {
 //                    blockpos1 = blockpos1.below();
 //                }
-//                if (this.platypus.level.getFluidState(blockpos1).is(FluidTags.WATER)) {
+//                if (this.platypus.level().getFluidState(blockpos1).is(FluidTags.WATER)) {
 //                    BlockPos pos3 = genSeafloorPos(blockpos1);
 //                    if (pos3 != null) {
 //                        return pos3;

@@ -1,16 +1,13 @@
 package net.jacob.bygonecreatures.entity.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.entity.custom.DodoEntity;
 import net.jacob.bygonecreatures.entity.custom.RaptorEntity;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
-import software.bernie.geckolib3.renderers.geo.GeoEntityRenderer;
+import software.bernie.geckolib.cache.object.BakedGeoModel;
+import software.bernie.geckolib.renderer.GeoEntityRenderer;
 
 public class RaptorRenderer extends GeoEntityRenderer<RaptorEntity> {
 
@@ -21,21 +18,12 @@ public class RaptorRenderer extends GeoEntityRenderer<RaptorEntity> {
 
     @Override
     public ResourceLocation getTextureLocation(RaptorEntity instance) {
-        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/raptorentity/raptortexture.png");
+        return new ResourceLocation(BygoneCreatures.MOD_ID, "textures/entity/raptorentity/repairrapttexture.png");
     }
 
-
-
     @Override
-    public RenderType getRenderType(RaptorEntity animatable, float partialTicks, PoseStack stack,
-                                    MultiBufferSource renderTypeBuffer, VertexConsumer vertexBuilder, int packedLightIn,
-                                    ResourceLocation textureLocation) {
-
-        if(animatable.isBaby()) {
-            stack.scale(0.5F, 0.5F, 0.5F);
-        } else {
-            stack.scale(0.9F, 0.9F, 0.9F);
-        }
-        return super.getRenderType(animatable, partialTicks, stack, renderTypeBuffer, vertexBuilder, packedLightIn, textureLocation);
+    public void scaleModelForRender(float widthScale, float heightScale, PoseStack poseStack, RaptorEntity animatable, BakedGeoModel model, boolean isReRender, float partialTick, int packedLight, int packedOverlay) {
+        float scale = animatable.isBaby() ? 0.5F : 0.9F;
+        super.scaleModelForRender(widthScale * scale, heightScale * scale, poseStack, animatable, model, isReRender, partialTick, packedLight, packedOverlay);
     }
 }

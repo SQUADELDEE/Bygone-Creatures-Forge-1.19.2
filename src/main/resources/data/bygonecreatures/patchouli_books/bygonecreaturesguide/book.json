@@ -2,5 +2,6 @@
   "name": "Bygone Guide",
   "landing_text": "A guide to all things Bygone Creatures, including custom mobs, armor and items!",
   "version": 1,
-  "creative_tab": "bygonecreaturestab"
+  "creative_tab": "bygonecreatures:bygonecreaturestab",
+  "use_resource_pack": true
 }

@@ -1,0 +1,22 @@
+{
+  "name": "Ichthyosaur",
+  "icon": "bygonecreatures:itchyspawnegg",
+  "category": "bygonecreatures:mobs",
+  "pages": [
+    {
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:ichthyosaur{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Ichthyosaur",
+      "scale": 1.0,
+      "rotate": true
+    },
+    {
+      "type": "patchouli:text",
+      "text": "This strong swimmer will attack when provoked. Pods of them travel together and periodically rise from the depths to hurl themselves high out of the water. They hunt fish, squid and drowned, and even leap to snatch low-flying pterosaurs: they clamp their prey in their jaws and hold on, biting, until it is dead. Feed one a gilded protosteak for it to drop an embryo core (used in an armor recipe)! Can be bucketed. They can be found in most ocean biomes and will drop their skulls and teeth occasionally when killed. See following page for gilded proto steak:"
+    },
+    {
+      "type": "patchouli:crafting",
+      "recipe": "bygonecreatures:gildedprotosteak"
+    }
+  ]
+}

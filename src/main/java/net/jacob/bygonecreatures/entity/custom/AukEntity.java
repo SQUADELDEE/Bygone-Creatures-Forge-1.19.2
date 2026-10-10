@@ -51,25 +51,24 @@ import net.minecraft.world.level.pathfinder.BlockPathTypes;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.phys.Vec3;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nonnull;
 import java.util.EnumSet;
 import java.util.List;
 
-public class AukEntity extends Animal implements IAnimatable {
+public class AukEntity extends Animal implements GeoEntity {
 
     private static final EntityDataAccessor<Boolean> FLOATING = SynchedEntityData.defineId(AukEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Boolean> EATING = SynchedEntityData.defineId(AukEntity.class, EntityDataSerializers.BOOLEAN);
-    private final AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
     private boolean needsSurface;
     private int huntDelay;
     private int eatDelay;
@@ -197,11 +196,11 @@ public class AukEntity extends Animal implements IAnimatable {
                     --this.eatDelay;
                 } else {
                     Vec3 mouthPos = this.calculateMouthPos();
-                    ((ServerLevel) this.level).sendParticles(new ItemParticleOption(ParticleTypes.ITEM, this.getMainHandItem()), mouthPos.x(), mouthPos.y(), mouthPos.z(), 2, 0.0D, 0.1D, 0.0D, 0.05D);
+                    ((ServerLevel) this.level()).sendParticles(new ItemParticleOption(ParticleTypes.ITEM, this.getMainHandItem()), mouthPos.x(), mouthPos.y(), mouthPos.z(), 2, 0.0D, 0.1D, 0.0D, 0.05D);
 
                    
                     if (--this.eatTime <= 0) {
-                        this.eat(this.level, this.getMainHandItem());
+                        this.eat(this.level(), this.getMainHandItem());
                         this.setEating(false);
                     }
                 }
@@ -213,7 +212,7 @@ public class AukEntity extends Animal implements IAnimatable {
                         } else {
                             this.setNeedsSurface(true);
                         }
-                    } else if (this.isOnGround()) {
+                    } else if (this.onGround()) {
                         this.startEating();
                     }
                 }
@@ -238,7 +237,7 @@ public class AukEntity extends Animal implements IAnimatable {
 //
 //        public ChiselBlockGoal(AukEntity auk) {
 //            this.mob = auk;
-//            this.level = auk.level;
+//            this.level() = auk.level();
 //            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK, Goal.Flag.JUMP));
 //        }
 //
@@ -247,17 +246,17 @@ public class AukEntity extends Animal implements IAnimatable {
 //                return false;
 //            } else {
 //                BlockPos blockpos = this.mob.blockPosition();
-//                if (IS_TALL_GRASS.test(this.level.getBlockState(blockpos))) {
+//                if (IS_TALL_GRASS.test(this.level().getBlockState(blockpos))) {
 //                    return true;
 //                } else {
-//                    return this.level.getBlockState(blockpos.below()).is(Blocks.DIAMOND_ORE);
+//                    return this.level().getBlockState(blockpos.below()).is(Blocks.DIAMOND_ORE);
 //                }
 //            }
 //        }
 //
 //        public void start() {
 //            this.eatAnimationTick = this.adjustedTickDelay(5);
-//            this.level.broadcastEntityEvent(this.mob, (byte)10);
+//            this.level().broadcastEntityEvent(this.mob, (byte)10);
 //            this.mob.getNavigation().stop();
 //        }
 //
@@ -277,20 +276,20 @@ public class AukEntity extends Animal implements IAnimatable {
 //            this.eatAnimationTick = Math.max(0, this.eatAnimationTick - 1);
 //            if (this.eatAnimationTick == this.adjustedTickDelay(4)) {
 //                BlockPos blockpos = this.mob.blockPosition();
-//                if (IS_TALL_GRASS.test(this.level.getBlockState(blockpos))) {
-//                    if (net.minecraftforge.event.ForgeEventFactory.getMobGriefingEvent(this.level, this.mob)) {
-//                        this.level.destroyBlock(blockpos, false);
-//                        this.level.setBlock(blockpos, Blocks.DIAMOND_BLOCK.defaultBlockState(), 2);
+//                if (IS_TALL_GRASS.test(this.level().getBlockState(blockpos))) {
+//                    if (net.minecraftforge.event.ForgeEventFactory.getMobGriefingEvent(this.level(), this.mob)) {
+//                        this.level().destroyBlock(blockpos, false);
+//                        this.level().setBlock(blockpos, Blocks.DIAMOND_BLOCK.defaultBlockState(), 2);
 //                        mob.spawnAtLocation(DODOEGG.get());
 //                    }
 //
 //                    this.mob.ate();
 //                } else {
 //                    BlockPos blockpos1 = blockpos.below();
-//                    if (this.level.getBlockState(blockpos1).is(Blocks.DIAMOND_ORE)) {
-//                        if (net.minecraftforge.event.ForgeEventFactory.getMobGriefingEvent(this.level, this.mob)) {
-//                            this.level.levelEvent(2001, blockpos1, Block.getId(Blocks.DIAMOND_ORE.defaultBlockState()));
-//                            this.level.setBlock(blockpos1, Blocks.DIAMOND_BLOCK.defaultBlockState(), 2);
+//                    if (this.level().getBlockState(blockpos1).is(Blocks.DIAMOND_ORE)) {
+//                        if (net.minecraftforge.event.ForgeEventFactory.getMobGriefingEvent(this.level(), this.mob)) {
+//                            this.level().levelEvent(2001, blockpos1, Block.getId(Blocks.DIAMOND_ORE.defaultBlockState()));
+//                            this.level().setBlock(blockpos1, Blocks.DIAMOND_BLOCK.defaultBlockState(), 2);
 //                            mob.spawnAtLocation(DODOEGG.get());
 //
 //                        }
@@ -307,7 +306,7 @@ public class AukEntity extends Animal implements IAnimatable {
     @Override
     public ItemStack eat(Level level, ItemStack itemStack) {
         if (itemStack.is(Items.ANDESITE)) {
-            if (!this.level.isClientSide && this.isAlive()) {
+            if (!this.level().isClientSide && this.isAlive()) {
 
 
                 this.spawnAtLocation(Items.IRON_NUGGET);
@@ -345,12 +344,12 @@ public class AukEntity extends Animal implements IAnimatable {
             return;
         }
 
-        if (this.equipItemIfPossible(itemStack)) {
+        if (!this.equipItemIfPossible(itemStack).isEmpty()) {
             int count = itemStack.getCount();
 
             if (count > 1) {
-                ItemEntity extraItems = new ItemEntity(this.level, this.getX(), this.getY(), this.getZ(), itemStack.split(count - 1));
-                this.level.addFreshEntity(extraItems);
+                ItemEntity extraItems = new ItemEntity(this.level(), this.getX(), this.getY(), this.getZ(), itemStack.split(count - 1));
+                this.level().addFreshEntity(extraItems);
             }
             this.onItemPickup(itemEntity);
             this.take(itemEntity, itemStack.getCount());
@@ -379,7 +378,7 @@ public class AukEntity extends Animal implements IAnimatable {
             this.moveRelative(this.getSpeed(), speed);
             this.move(MoverType.SELF, this.getDeltaMovement());
             this.setDeltaMovement(this.getDeltaMovement().scale(0.9D));
-            this.calculateEntityAnimation(this, false);
+            this.calculateEntityAnimation(false);
         } else {
             super.travel(speed);
         }
@@ -408,7 +407,7 @@ public class AukEntity extends Animal implements IAnimatable {
 //                itemstack.shrink(1);
 //            }
 //            this.setFedora(true);
-//            return InteractionResult.sidedSuccess(this.level.isClientSide);
+//            return InteractionResult.sidedSuccess(this.level().isClientSide);
 //        }
 //        if (redstone && !this.isSensing()) {
 //            superCharged = itemstack.getItem() == Items.REDSTONE_BLOCK;
@@ -416,7 +415,7 @@ public class AukEntity extends Animal implements IAnimatable {
 //                itemstack.shrink(1);
 //            }
 //            this.setSensing(true);
-//            return InteractionResult.sidedSuccess(this.level.isClientSide);
+//            return InteractionResult.sidedSuccess(this.level().isClientSide);
 //        }
 
     }
@@ -438,7 +437,7 @@ public class AukEntity extends Animal implements IAnimatable {
 
     @Override
     public AgeableMob getBreedOffspring(ServerLevel level, AgeableMob ageableMob) {
-        AukEntity auk = ModEntityTypes.AUK.get().create(level);
+        AukEntity auk = ModEntityTypes.AUK.get().create(level());
         return auk;
     }
 
@@ -458,7 +457,7 @@ public class AukEntity extends Animal implements IAnimatable {
         spawnGroupData = super.finalizeSpawn(levelAccessor, difficultyInstance, mobSpawnType, spawnGroupData, p_146750_);
         if (mobSpawnType.equals(MobSpawnType.SPAWNER) && this.random.nextFloat() <= 0.2F) {
             for (int i = 0; i < this.random.nextInt(1, 4); i++) {
-                AukEntity baby = ModEntityTypes.AUK.get().create(this.level);
+                AukEntity baby = ModEntityTypes.AUK.get().create(this.level());
                 baby.moveTo(this.getX(), this.getY(), this.getZ(), this.getYRot(), 0.0F);
                 baby.setBaby(true);
                 levelAccessor.addFreshEntity(baby);
@@ -467,38 +466,38 @@ public class AukEntity extends Animal implements IAnimatable {
         return spawnGroupData;
     }
 
-    private <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
+    private PlayState predicate(AnimationState<AukEntity> state) {
         if (this.isInWater()) {
             if (this.isFloating()) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim2", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim2"));
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
             }
             return PlayState.CONTINUE;
         } else {
             if (this.isEating()) {
                 if (this.getMainHandItem().is(Items.ANDESITE)) {
-                    event.getController().setAnimation(new AnimationBuilder().addAnimation("eat", ILoopType.EDefaultLoopTypes.LOOP));
+                    state.getController().setAnimation(RawAnimation.begin().thenLoop("eat"));
                 } else {
-                    event.getController().setAnimation(new AnimationBuilder().addAnimation("eat", ILoopType.EDefaultLoopTypes.LOOP));
+                    state.getController().setAnimation(RawAnimation.begin().thenLoop("eat"));
                 }
                 return PlayState.CONTINUE;
-            } else if (event.isMoving()) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+            } else if (state.isMoving()) {
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
                 return PlayState.CONTINUE;
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
                 return PlayState.CONTINUE;
             }
         }
     }
 
-    private <E extends IAnimatable> PlayState floatingHandsPredicate(AnimationEvent<E> event) {
+    private PlayState floatingHandsPredicate(AnimationState<AukEntity> state) {
         if (this.isFloating()) {
             if (this.isEating() && this.eatDelay <= 0) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.PLAY_ONCE));
+                state.getController().setAnimation(RawAnimation.begin().thenPlay("swim"));
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
             }
             return PlayState.CONTINUE;
         }
@@ -506,14 +505,14 @@ public class AukEntity extends Animal implements IAnimatable {
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController<>(this, "controller", 4, this::predicate));
-        data.addAnimationController(new AnimationController<>(this, "floating_hands_controller", 10, this::floatingHandsPredicate));
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller", 4, this::predicate));
+        controllers.add(new AnimationController<>(this, "floating_hands_controller", 10, this::floatingHandsPredicate));
     }
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
     public boolean isHungryAt(ItemStack foodStack) {
@@ -523,17 +522,18 @@ public class AukEntity extends Animal implements IAnimatable {
 
     private void rejectFood() {
         if (!this.getMainHandItem().isEmpty()) {
-            ItemEntity itemEntity = new ItemEntity(this.level, this.getX(), this.getY(), this.getZ(), this.getMainHandItem().copy());
+            ItemEntity itemEntity = new ItemEntity(this.level(), this.getX(), this.getY(), this.getZ(), this.getMainHandItem().copy());
             itemEntity.setPickUpDelay(40);
             itemEntity.setThrower(this.getUUID());
+            itemEntity.getPersistentData().putUUID("BygoneRejector", this.getUUID());
             this.getMainHandItem().shrink(1);
-            this.level.addFreshEntity(itemEntity);
+            this.level().addFreshEntity(itemEntity);
         }
     }
 
     public boolean rejectedItem(ItemEntity itemEntity) {
-        if (itemEntity.getThrower() != null) {
-            return itemEntity.getThrower().equals(this.getUUID());
+        if (itemEntity.getPersistentData().hasUUID("BygoneRejector")) {
+            return itemEntity.getPersistentData().getUUID("BygoneRejector").equals(this.getUUID());
         }
         return false;
     }
@@ -623,10 +623,10 @@ public class AukEntity extends Animal implements IAnimatable {
                                 this.mob.setXRot(this.rotlerp(this.mob.getXRot(), xRot, 45.0F));
                             }
 
-                            BlockPos wantedPos = new BlockPos(this.wantedX, this.wantedY, this.wantedZ);
-                            BlockState wantedBlockState = this.mob.level.getBlockState(wantedPos);
+                            BlockPos wantedPos = BlockPos.containing(this.wantedX, this.wantedY, this.wantedZ);
+                            BlockState wantedBlockState = this.mob.level().getBlockState(wantedPos);
 
-                            if (d1 > (double) this.mob.maxUpStep && d0 * d0 + d2 * d2 < 4.0F && d1 <= 1.0D && wantedBlockState.getFluidState().isEmpty()) {
+                            if (d1 > (double) this.mob.maxUpStep() && d0 * d0 + d2 * d2 < 4.0F && d1 <= 1.0D && wantedBlockState.getFluidState().isEmpty()) {
                                 this.mob.getJumpControl().jump();
                                 this.mob.setSpeed(speed);
                             }
@@ -814,7 +814,7 @@ public class AukEntity extends Animal implements IAnimatable {
 
         @Override
         public boolean canUse() {
-            return AukEntity.this.isAlive() && AukEntity.this.needsSurface() && !AukEntity.this.isOnGround();
+            return AukEntity.this.isAlive() && AukEntity.this.needsSurface() && !AukEntity.this.onGround();
         }
 
         @Override
@@ -830,7 +830,7 @@ public class AukEntity extends Animal implements IAnimatable {
 
         @Override
         public void tick() {
-            if (this.targetPos == null || !AukEntity.this.getLevel().getBlockState(new BlockPos(this.targetPos)).isAir()) {
+            if (this.targetPos == null || !AukEntity.this.level().getBlockState(BlockPos.containing(this.targetPos)).isAir()) {
                 if (AukEntity.this.getMainHandItem().is(Items.ANDESITE)) {
                     this.targetPos = LandRandomPos.getPos(AukEntity.this, 15, 7);
                     this.goingLand = true;
@@ -845,7 +845,7 @@ public class AukEntity extends Animal implements IAnimatable {
                 AukEntity.this.move(MoverType.SELF, AukEntity.this.getDeltaMovement());
 
                 if (this.goingLand) {
-                    if (!AukEntity.this.isInWater() && AukEntity.this.isOnGround()) {
+                    if (!AukEntity.this.isInWater() && AukEntity.this.onGround()) {
                         this.stop();
                     }
                 } else {
@@ -867,7 +867,7 @@ public class AukEntity extends Animal implements IAnimatable {
 
         public void tickTimeout() {
             if (this.timeoutTimer % 2 == 0) {
-                ((ServerLevel) AukEntity.this.getLevel()).sendParticles(ParticleTypes.BUBBLE, AukEntity.this.getRandomX(0.6D), AukEntity.this.getY(), AukEntity.this.getRandomZ(0.6D), 2, 0.0D, 0.1D, 0.0D, 0.0D);
+                ((ServerLevel) AukEntity.this.level()).sendParticles(ParticleTypes.BUBBLE, AukEntity.this.getRandomX(0.6D), AukEntity.this.getY(), AukEntity.this.getRandomZ(0.6D), 2, 0.0D, 0.1D, 0.0D, 0.0D);
             }
             if (this.timeoutTimer <= 0) {
                
@@ -889,7 +889,7 @@ public class AukEntity extends Animal implements IAnimatable {
             BlockPos airPos = null;
 
             for (BlockPos blockPos : blocksInRadius) {
-                if (AukEntity.this.level.getBlockState(blockPos).isAir()) {
+                if (AukEntity.this.level().getBlockState(blockPos).isAir()) {
                     airPos = blockPos;
                     break;
                 }
@@ -909,14 +909,14 @@ public class AukEntity extends Animal implements IAnimatable {
             if (!AukEntity.this.getMainHandItem().isEmpty()) {
                 return false;
             } else {
-                List<ItemEntity> itemsInRadius = AukEntity.this.level.getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
+                List<ItemEntity> itemsInRadius = AukEntity.this.level().getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
                 return !itemsInRadius.isEmpty();
             }
         }
 
         @Override
         public void tick() {
-            List<ItemEntity> itemsInRadius = AukEntity.this.level.getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
+            List<ItemEntity> itemsInRadius = AukEntity.this.level().getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
             ItemStack handStack = AukEntity.this.getMainHandItem();
             if (handStack.isEmpty() && !itemsInRadius.isEmpty()) {
                 Path path = AukEntity.this.getNavigation().createPath(itemsInRadius.get(0), 0);
@@ -926,7 +926,7 @@ public class AukEntity extends Animal implements IAnimatable {
 
         @Override
         public void start() {
-            List<ItemEntity> itemsInRadius = AukEntity.this.level.getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
+            List<ItemEntity> itemsInRadius = AukEntity.this.level().getEntitiesOfClass(ItemEntity.class, AukEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> AukEntity.this.wantsToPickUp(itemEntity.getItem()) && !AukEntity.this.rejectedItem(itemEntity)));
             if (!itemsInRadius.isEmpty()) {
                 Path path = AukEntity.this.getNavigation().createPath(itemsInRadius.get(0), 0);
                 AukEntity.this.getNavigation().moveTo(path, 1.0D);

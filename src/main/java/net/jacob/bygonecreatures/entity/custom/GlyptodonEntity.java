@@ -7,6 +7,7 @@ import net.jacob.bygonecreatures.entity.client.network.OpenLuggageScreenPacket;
 import net.jacob.bygonecreatures.item.ModItems;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -16,6 +17,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.*;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.*;
@@ -24,7 +26,6 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.animal.horse.AbstractChestedHorse;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.vehicle.DismountHelper;
 import net.minecraft.world.item.ItemStack;
@@ -38,27 +39,26 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.common.util.LazyOptional;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
-import net.minecraftforge.items.CapabilityItemHandler;
+import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.items.wrapper.InvWrapper;
 import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.EnumSet;
 
 import static net.jacob.bygonecreatures.item.ModItems.*;
 
 
-public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerable, Saddleable, ContainerListener {
+public class GlyptodonEntity extends Animal implements GeoEntity, ItemSteerable, Saddleable, ContainerListener {
 
     public static final String INVENTORY_TAG = "Inventory";
 
@@ -81,13 +81,18 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     }
 
     private static final EntityDataAccessor<Boolean> SLEEPING = SynchedEntityData.defineId(GlyptodonEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Boolean> DATA_ARMORED = SynchedEntityData.defineId(GlyptodonEntity.class, EntityDataSerializers.BOOLEAN);
 
-    private static final EntityDataAccessor<Boolean> DATA_ID_CHEST = SynchedEntityData.defineId(AbstractChestedHorse.class, EntityDataSerializers.BOOLEAN);
     public static final int INV_CHEST_COUNT = 15;
     private static final EntityDataAccessor<Boolean> DATA_SADDLE_ID = SynchedEntityData.defineId(GlyptodonEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> DATA_BOOST_TIME = SynchedEntityData.defineId(GlyptodonEntity.class, EntityDataSerializers.INT);
 
     private final ItemBasedSteering steering = new ItemBasedSteering(this.entityData, DATA_BOOST_TIME, DATA_SADDLE_ID);
+
+    // Who provoked the current armored brace. Transient AI bookkeeping only - not synced
+    // or persisted, always re-derived from the combat event that triggered the brace.
+    @Nullable
+    private LivingEntity armorThreat;
 
     public int geggTime = this.random.nextInt(3000) + 3000;
     public GlyptodonEntity(EntityType<? extends Animal> entityType, Level level) {
@@ -121,13 +126,13 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
         return this.inventory;
     }
 
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
 
 
     @Nullable
     @Override
     public AgeableMob getBreedOffspring(ServerLevel serverLevel, AgeableMob mob) {
-        return ModEntityTypes.GLYPTODON.get().create(level);
+        return ModEntityTypes.GLYPTODON.get().create(level());
     }
 
 //    public AbstractContainerMenu createMenu(int id, Inventory playerInventory, Player player) {
@@ -157,27 +162,27 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
     }
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walking", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<GlyptodonEntity> state) {
+        if (state.isMoving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
         if (this.isSleeping()){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("sleeping", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("sleeping"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
     public boolean isFood(ItemStack stack) {
@@ -187,9 +192,9 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
 
 
     @javax.annotation.Nullable
-    public Entity getControllingPassenger() {
+    public LivingEntity getControllingPassenger() {
         Entity entity = this.getFirstPassenger();
-        return entity != null && this.canBeControlledBy(entity) ? entity : null;
+        return entity instanceof LivingEntity livingEntity && this.canBeControlledBy(entity) ? livingEntity : null;
     }
 
     private boolean canBeControlledBy(Entity entity) {
@@ -203,10 +208,9 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     protected void defineSynchedData() {
         super.defineSynchedData();
         this.entityData.define(SLEEPING, false);
+        this.entityData.define(DATA_ARMORED, false);
         this.entityData.define(DATA_SADDLE_ID, false);
         this.entityData.define(DATA_BOOST_TIME, 0);
-        this.entityData.define(DATA_ID_CHEST, false);
-
     }
 
     public void addAdditionalSaveData(CompoundTag nbt) {
@@ -250,7 +254,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     }
 
     public void onSyncedDataUpdated(EntityDataAccessor<?> data) {
-        if (DATA_BOOST_TIME.equals(data) && this.level.isClientSide) {
+        if (DATA_BOOST_TIME.equals(data) && this.level().isClientSide) {
             this.steering.onSynced();
         }
 
@@ -298,7 +302,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
                 --this.countdown;
                 return false;
             } else {
-                return GlyptodonEntity.this.level.isNight();
+                return GlyptodonEntity.this.level().isNight();
             }
         }
 
@@ -315,12 +319,55 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
         }
     }
 
+    public class ArmoredBraceGoal extends Goal {
+        private static final double THREAT_RANGE = 14.0D;
+
+        public ArmoredBraceGoal() {
+            // No Flag.JUMP: leaves FloatGoal free to keep us from drowning while braced.
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
+        }
+
+        public boolean canUse() {
+            return GlyptodonEntity.this.isArmored();
+        }
+
+        public boolean canContinueToUse() {
+            LivingEntity threat = GlyptodonEntity.this.armorThreat;
+            return GlyptodonEntity.this.isArmored() && threat != null && threat.isAlive()
+                    && threat.distanceToSqr(GlyptodonEntity.this) <= THREAT_RANGE * THREAT_RANGE;
+        }
+
+        public void start() {
+            GlyptodonEntity.this.getNavigation().stop();
+        }
+
+        public void tick() {
+            GlyptodonEntity.this.getNavigation().stop();
+            GlyptodonEntity.this.getMoveControl().setWantedPosition(GlyptodonEntity.this.getX(), GlyptodonEntity.this.getY(), GlyptodonEntity.this.getZ(), 0.0D);
+            LivingEntity threat = GlyptodonEntity.this.armorThreat;
+            if (threat != null) GlyptodonEntity.this.getLookControl().setLookAt(threat, 30f, 30f);
+        }
+
+        public void stop() {
+            GlyptodonEntity.this.setArmored(false);
+            GlyptodonEntity.this.armorThreat = null;
+        }
+    }
+
     public boolean isSleeping() {
         return this.entityData.get(SLEEPING);
     }
 
     public void setSleeping(boolean sleeping) {
         this.entityData.set(SLEEPING, sleeping);
+    }
+
+    public boolean isArmored() {
+        return this.entityData.get(DATA_ARMORED);
+    }
+
+    public void setArmored(boolean armored) {
+        this.entityData.set(DATA_ARMORED, armored);
     }
 
 
@@ -330,12 +377,59 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
         Entity srcEnt = src.getEntity();
         if (srcEnt != null && (srcEnt == this || hasPassenger(srcEnt))) return true;
 
-        if ( src == DamageSource.CACTUS) // THICK SHELLED
+        if (src.is(net.minecraft.world.damagesource.DamageTypes.CACTUS)) // THICK SHELLED
             return true;
-        if (src == DamageSource.ANVIL)
+        if (src.is(net.minecraft.world.damagesource.DamageTypes.FALLING_ANVIL))
+            return true;
+
+        // Braced behind its shell: only an explosion can still get through.
+        if (isArmored() && !src.is(DamageTypeTags.IS_EXPLOSION))
             return true;
 
         return super.isInvulnerableTo(src);
+    }
+
+    @Override
+    public boolean hurt(DamageSource src, float amount)
+    {
+        if (isInvulnerableTo(src))
+        {
+            if (isArmored() && !level().isClientSide) onArmoredHitBlocked(src);
+            return false;
+        }
+
+        boolean wasArmored = isArmored();
+        boolean result = super.hurt(src, amount);
+
+        // First real hit provokes the brace; every hit after that while braced is
+        // handled above (blocked, but still gives feedback via onArmoredHitBlocked).
+        if (result && !wasArmored && !level().isClientSide && src.getEntity() instanceof LivingEntity attacker)
+            enterArmoredState(attacker);
+
+        return result;
+    }
+
+    private void enterArmoredState(LivingEntity attacker)
+    {
+        setArmored(true);
+        armorThreat = attacker;
+        playArmorFeedback();
+    }
+
+    private void onArmoredHitBlocked(DamageSource src)
+    {
+        if (src.getEntity() instanceof LivingEntity attacker) armorThreat = attacker;
+        playArmorFeedback();
+    }
+
+    private void playArmorFeedback()
+    {
+        level().playSound(null, blockPosition(), SoundEvents.ANVIL_LAND, SoundSource.NEUTRAL, 1.0F, 0.9F + random.nextFloat() * 0.2F);
+        if (level() instanceof ServerLevel serverLevel)
+        {
+            serverLevel.sendParticles(ParticleTypes.ANGRY_VILLAGER, getX(), getY() + getBbHeight() * 0.6, getZ(), 6,
+                    getBbWidth() * 0.3, getBbHeight() * 0.3, getBbWidth() * 0.3, 0.0);
+        }
     }
 
 
@@ -343,13 +437,13 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     public InteractionResult mobInteract(Player player, InteractionHand hand) {
         boolean flag = this.isFood(player.getItemInHand(hand));
         if (!flag && this.isSaddled() && !this.isVehicle() && !player.isSecondaryUseActive()) {
-            if (!this.level.isClientSide  && !player.isShiftKeyDown()) {
+            if (!this.level().isClientSide  && !player.isShiftKeyDown()) {
                 player.startRiding(this);
             }
 
 
 
-            return InteractionResult.sidedSuccess(this.level.isClientSide);
+            return InteractionResult.sidedSuccess(this.level().isClientSide);
 
         } else {
             InteractionResult interactionresult = super.mobInteract(player, hand);
@@ -379,13 +473,13 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
         if (stack.is(Items.NAME_TAG)) return InteractionResult.PASS;
 
         if(player.isShiftKeyDown() && this.isSaddled()) {
-            this.getLevel().gameEvent(player, GameEvent.CONTAINER_OPEN, player.blockPosition());
+            this.level().gameEvent(player, GameEvent.CONTAINER_OPEN, player.blockPosition());
             //prevents sound from playing 4 times (twice on server only). Apparently interactAt fires 4 times????
             if (this.soundCooldown == 0) {
                 this.playSound(SoundEvents.CHEST_OPEN, 0.5F, this.getRandom().nextFloat() * 0.1F + 0.9F);
                 this.soundCooldown = 5;
             }
-            if (!this.getLevel().isClientSide()) {
+            if (!this.level().isClientSide()) {
                 ServerPlayer sp = (ServerPlayer) player;
                 if (sp.containerMenu != sp.inventoryMenu) sp.closeContainer();
 
@@ -406,7 +500,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     @NotNull
     @Override
     public <T> LazyOptional<T> getCapability(Capability<T> capability, @Nullable Direction facing) {
-        if (this.isAlive() && capability == CapabilityItemHandler.ITEM_HANDLER_CAPABILITY && this.itemHandler != null)
+        if (this.isAlive() && capability == ForgeCapabilities.ITEM_HANDLER && this.itemHandler != null)
             return this.itemHandler.cast();
         return super.getCapability(capability, facing);
     }
@@ -445,7 +539,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     public void equipSaddle(@Nullable SoundSource sound) {
         this.steering.setSaddle(true);
         if (sound != null) {
-            this.level.playSound((Player)null, this, SoundEvents.PIG_SADDLE, sound, 0.5F, 1.0F);
+            this.level().playSound((Player)null, this, SoundEvents.PIG_SADDLE, sound, 0.5F, 1.0F);
         }
 
     }
@@ -460,10 +554,9 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
 
     @Override
     public void travel(Vec3 vector) {
-        this.travel(this, this.steering, vector);
+        super.travel(vector);
     }
 
-    @Override
     public void travelWithInput(Vec3 vector) {
         super.travel(vector);
     }
@@ -482,10 +575,10 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
 
                 for(int[] aint1 : aint) {
                     blockpos$mutableblockpos.set(blockpos.getX() + aint1[0], blockpos.getY(), blockpos.getZ() + aint1[1]);
-                    double d0 = this.level.getBlockFloorHeight(blockpos$mutableblockpos);
+                    double d0 = this.level().getBlockFloorHeight(blockpos$mutableblockpos);
                     if (DismountHelper.isBlockFloorValid(d0)) {
                         Vec3 vec3 = Vec3.upFromBottomCenterOf(blockpos$mutableblockpos, d0);
-                        if (DismountHelper.canDismountTo(this.level, livingEntity, aabb.move(vec3))) {
+                        if (DismountHelper.canDismountTo(this.level(), livingEntity, aabb.move(vec3))) {
                             livingEntity.setPose(pose);
                             return vec3;
                         }
@@ -514,7 +607,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
         super.aiStep();
 
 
-        if (!this.level.isClientSide && this.isAlive() && !this.isBaby() && --this.geggTime <= 0) {
+        if (!this.level().isClientSide && this.isAlive() && !this.isBaby() && --this.geggTime <= 0) {
             this.playSound(SoundEvents.CHICKEN_EGG, 1.0F, (this.random.nextFloat() - this.random.nextFloat()) * 0.2F + 1.0F);
             this.spawnAtLocation(DUNG.get());
             this.gameEvent(GameEvent.ENTITY_PLACE);
@@ -528,6 +621,7 @@ public class GlyptodonEntity extends Animal implements IAnimatable, ItemSteerabl
     protected void registerGoals() {
         this.eatBlockGoal = new EatBlockGoal(this);
         this.goalSelector.addGoal(0, new FloatGoal(this));
+        this.goalSelector.addGoal(0, new ArmoredBraceGoal());
         this.goalSelector.addGoal(1, new PanicGoal(this, 1.25D));
         this.goalSelector.addGoal(2, new BreedGoal(this, 1.0D));
         this.goalSelector.addGoal(3, new TemptGoal(this, 1.25D, Ingredient.of(Items.WHEAT), false));

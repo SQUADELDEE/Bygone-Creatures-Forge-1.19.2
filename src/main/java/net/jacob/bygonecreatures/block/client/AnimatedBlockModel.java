@@ -3,9 +3,9 @@ package net.jacob.bygonecreatures.block.client;
 import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.block.entity.custom.AnimatedBlockEntity;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
+import software.bernie.geckolib.model.GeoModel;
 
-public class AnimatedBlockModel extends AnimatedGeoModel<AnimatedBlockEntity> {
+public class AnimatedBlockModel extends GeoModel<AnimatedBlockEntity> {
 
     @Override
     public ResourceLocation getModelResource(AnimatedBlockEntity object) {

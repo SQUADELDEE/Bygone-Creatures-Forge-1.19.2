@@ -4,7 +4,6 @@ import net.minecraft.core.particles.ItemParticleOption;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.sounds.SoundEvents;
-import net.minecraft.world.damagesource.IndirectEntityDamageSource;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -37,7 +36,7 @@ public class DiploSlimeItem extends ThrowableItemProjectile {
             double d0 = 0.08D;
 
             for(int i = 0; i < 8; ++i) {
-                this.level.addParticle(new ItemParticleOption(ParticleTypes.ITEM, this.getItem()), this.getX(), this.getY(), this.getZ(), ((double)this.random.nextFloat() - 0.5D) * 0.08D, ((double)this.random.nextFloat() - 0.5D) * 0.08D, ((double)this.random.nextFloat() - 0.5D) * 0.08D);
+                this.level().addParticle(new ItemParticleOption(ParticleTypes.ITEM, this.getItem()), this.getX(), this.getY(), this.getZ(), ((double)this.random.nextFloat() - 0.5D) * 0.08D, ((double)this.random.nextFloat() - 0.5D) * 0.08D, ((double)this.random.nextFloat() - 0.5D) * 0.08D);
             }
         }
 
@@ -51,15 +50,15 @@ public class DiploSlimeItem extends ThrowableItemProjectile {
             if (livingEntity instanceof DiplocaulusEntity) {
                 livingEntity.heal(2);
             } else {
-                livingEntity.hurt(new IndirectEntityDamageSource("arrow", this, this.getOwner()), 0.0F);
+                livingEntity.hurt(this.damageSources().thrown(this, this.getOwner()), 0.0F);
                 livingEntity.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 400, 3));
 
             }
         }
         this.playSound(SoundEvents.SLIME_BLOCK_BREAK, 1, 1);
 
-        if (!this.level.isClientSide) {
-            this.level.broadcastEntityEvent(this, (byte) 3);
+        if (!this.level().isClientSide) {
+            this.level().broadcastEntityEvent(this, (byte) 3);
             this.discard();
         }
     }
@@ -71,14 +70,14 @@ public class DiploSlimeItem extends ThrowableItemProjectile {
 //            if (livingEntity instanceof DiplocaulusEntity) {
 //                livingEntity.heal(2);
 //            } else {
-//                livingEntity.hurt(new IndirectEntityDamageSource("arrow", this, this.getOwner()), 0.0F);
+//                livingEntity.hurt(this.damageSources().thrown(this, this.getOwner()), 0.0F);
 //                livingEntity.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 400));
 //            }
 //        }
 //        this.playSound(SoundEvents.SLIME_BLOCK_BREAK, 1, 1);
 //
-//        if (!this.level.isClientSide) {
-//            this.level.broadcastEntityEvent(this, (byte) 3);
+//        if (!this.level().isClientSide) {
+//            this.level().broadcastEntityEvent(this, (byte) 3);
 //            this.discard();
 //        }
 //

@@ -23,7 +23,6 @@ import net.minecraft.world.entity.ai.goal.*;
 import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.ai.navigation.WaterBoundPathNavigation;
-import net.minecraft.world.entity.ai.targeting.TargetingConditions;
 import net.minecraft.world.entity.animal.*;
 import net.minecraft.world.entity.monster.Drowned;
 import net.minecraft.world.entity.player.Player;
@@ -35,21 +34,20 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.pathfinder.BlockPathTypes;
 import net.minecraft.world.phys.Vec3;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nonnull;
 import java.util.EnumSet;
 import java.util.function.Predicate;
 
-public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketable {
+public class KemKemEntity extends WaterAnimal implements  GeoEntity, Bucketable {
 
 
 
@@ -119,7 +117,7 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 //                itemstack.shrink(1);
 //            }
 //            this.setFedora(true);
-//            return InteractionResult.sidedSuccess(this.level.isClientSide);
+//            return InteractionResult.sidedSuccess(this.level().isClientSide);
 //        }
 //        if (redstone && !this.isSensing()) {
 //            superCharged = itemstack.getItem() == Items.REDSTONE_BLOCK;
@@ -127,12 +125,11 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 //                itemstack.shrink(1);
 //            }
 //            this.setSensing(true);
-//            return InteractionResult.sidedSuccess(this.level.isClientSide);
+//            return InteractionResult.sidedSuccess(this.level().isClientSide);
 //        }
         return Bucketable.bucketMobPickup(player, hand, this).orElse(super.mobInteract(player, hand));
     }
 
-    private static final TargetingConditions PLAYER_PREDICATE = TargetingConditions.forNonCombat().range(24.0D).ignoreLineOfSight();
     private static final EntityDataAccessor<Integer> ATTACK_TICK = SynchedEntityData.defineId(RaptorEntity.class, EntityDataSerializers.INT);
     private int huntDelay;
 
@@ -140,7 +137,7 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 
 
     private static final EntityDataAccessor<Integer> PASSIVE = SynchedEntityData.defineId(KemKemEntity.class, EntityDataSerializers.INT);
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
     protected int attackCooldown = 0;
     private boolean wasOnGround;
     private int passiveFor = 0;
@@ -174,65 +171,11 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
         this.goalSelector.addGoal(4, new TemptGoal(this, 1.25D, Ingredient.of(Items.COD, ModItems.COOKEDARMOREDFISH.get()), false));
         this.goalSelector.addGoal(5, new LookAtPlayerGoal(this, Player.class, 6.0F));
         this.goalSelector.addGoal(0, new TryFindWaterGoal(this));
-        this.goalSelector.addGoal(2, new KemKemEntity.SwimWithPlayerGoal(this, 4.0D));
 //        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Squid.class, true && this.getHuntDelay() <= 0));
         this.targetSelector.addGoal(1, new NearestAttackableTargetGoal<>(this, AbstractFish.class, 20, false, false, (fish) -> fish instanceof AbstractSchoolingFish && this.getHuntDelay() <= 0));
         this.goalSelector.addGoal(4, new RandomSwimmingGoal(this, 1.0D, 10));
 
     }
-
-
-    static class SwimWithPlayerGoal extends Goal {
-        private final KemKemEntity dolphin;
-        private final double speed;
-        private Player targetPlayer;
-
-        SwimWithPlayerGoal(KemKemEntity dolphinIn, double speedIn) {
-            this.dolphin = dolphinIn;
-            this.speed = speedIn;
-            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
-        }
-
-        public boolean canUse() {
-            this.targetPlayer = this.dolphin.level.getNearestPlayer(KemKemEntity.PLAYER_PREDICATE, this.dolphin);
-            if (this.targetPlayer == null) {
-                return false;
-            } else {
-                return this.targetPlayer.isSwimming() && this.dolphin.getTarget() != this.targetPlayer;
-            }
-        }
-
-        public boolean canContinueToUse() {
-            return this.targetPlayer != null  && this.dolphin.getTarget() != this.targetPlayer && this.targetPlayer.isSwimming() && this.dolphin.distanceToSqr(this.targetPlayer) < 256.0D;
-        }
-
-        public void start() {
-        }
-
-        public void stop() {
-            this.targetPlayer = null;
-            this.dolphin.getNavigation().stop();
-        }
-
-        public void tick() {
-            this.dolphin.getLookControl().setLookAt(this.targetPlayer, (float) (this.dolphin.getMaxHeadYRot() + 20), (float) this.dolphin.getMaxHeadXRot());
-            if (this.dolphin.distanceToSqr(this.targetPlayer) < 10D) {
-                this.dolphin.getNavigation().stop();
-            } else {
-                this.dolphin.getNavigation().moveTo(this.targetPlayer, this.speed);
-            }
-
-            if (this.targetPlayer.isSwimming() && this.targetPlayer.level.random.nextInt(6) == 0) {
-
-                this.targetPlayer.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 300));
-
-
-            }
-        }
-    }
-
-
-
 
 
     @Override
@@ -353,7 +296,7 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
     public void tick() {
 
 
-        if (!this.level.isClientSide()) {
+        if (!this.level().isClientSide()) {
             if (this.getAttackTick() > 0) this.getEntityData().set(ATTACK_TICK, this.getAttackTick() - 1);
 
 
@@ -366,16 +309,16 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
         if (this.passiveFor > 0) {
             passiveFor--;
         }
-        if (this.level.isClientSide && this.isInWater() && this.getDeltaMovement().lengthSqr() > 0.03D) {
+        if (this.level().isClientSide && this.isInWater() && this.getDeltaMovement().lengthSqr() > 0.03D) {
             Vec3 vec3 = this.getViewVector(0.0F);
             float f = Mth.cos(this.getYRot() * ((float) Math.PI / 320F)) * 0.3F;
             float f1 = Mth.sin(this.getYRot() * ((float) Math.PI / 320F)) * 0.3F;
             float f2 = 1.2F - this.random.nextFloat() * 0.7F;
 
             for(int i = 0; i < 2; ++i) {
-                this.level.addParticle(ParticleTypes.DOLPHIN, this.getX() - vec3.x * (double)f2 + (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 + (double)f1, 0.0D, 0.0D, 0.0D);
-                this.level.addParticle(ParticleTypes.DOLPHIN, this.getX() - vec3.x * (double)f2 - (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 - (double)f1, 0.0D, 0.0D, 0.0D);
-                //this.level.addParticle(ParticleTypes.END_ROD, this.getX() - vec3.x * (double)f2 - (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 - (double)f1, 0.0D, 0.0D, 0.0D);
+                this.level().addParticle(ParticleTypes.DOLPHIN, this.getX() - vec3.x * (double)f2 + (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 + (double)f1, 0.0D, 0.0D, 0.0D);
+                this.level().addParticle(ParticleTypes.DOLPHIN, this.getX() - vec3.x * (double)f2 - (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 - (double)f1, 0.0D, 0.0D, 0.0D);
+                //this.level().addParticle(ParticleTypes.END_ROD, this.getX() - vec3.x * (double)f2 - (double)f, this.getY() - vec3.y, this.getZ() - vec3.z * (double)f2 - (double)f1, 0.0D, 0.0D, 0.0D);
             }
 
         }
@@ -393,26 +336,26 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && this.isInWater() && !(this.getAttackTick() > 0)) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("animation.kemkem.swim", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<KemKemEntity> state) {
+        if (state.isMoving() && this.isInWater() && !(this.getAttackTick() > 0)) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.kemkem.swim"));
             return PlayState.CONTINUE;
         }
 
         if (this.getAttackTick() > 0){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("animation.kemkem.bite", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.kemkem.bite"));
             return PlayState.CONTINUE;
         }
 
         if(!this.isInWater()){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("animation.kemkem.beached", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.kemkem.beached"));
             return PlayState.CONTINUE;
 
         }
 
 
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("animation.kemkem.idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.kemkem.idle"));
         return PlayState.CONTINUE;
     }
 
@@ -421,8 +364,8 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
 
     }
@@ -437,7 +380,7 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 //    }
 
     @Override
-    public AnimationFactory getFactory() {
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
         return factory;
     }
 
@@ -471,7 +414,7 @@ public class KemKemEntity extends WaterAnimal implements  IAnimatable, Bucketabl
 
 
         }
-        if (shouldHurt = target.hurt(DamageSource.mobAttack(this), damage)) {
+        if (shouldHurt = target.hurt(this.damageSources().mobAttack(this), damage)) {
             if (knockback > 0.0f && target instanceof LivingEntity) {
                 ((LivingEntity)target).knockback(knockback * 0.5f, Mth.sin(this.getYRot() * ((float)Math.PI / 180)), -Mth.cos(this.getYRot() * ((float)Math.PI / 180)));
                 this.setDeltaMovement(this.getDeltaMovement().multiply(0.6, 1.0, 0.6));

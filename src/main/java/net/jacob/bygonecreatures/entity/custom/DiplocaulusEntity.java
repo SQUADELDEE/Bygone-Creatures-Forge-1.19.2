@@ -52,15 +52,14 @@ import net.minecraft.world.level.pathfinder.BlockPathTypes;
 import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.phys.Vec3;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nonnull;
 import java.util.EnumSet;
@@ -69,7 +68,7 @@ import java.util.function.Predicate;
 
 import static net.jacob.bygonecreatures.item.ModItems.DODOEGG;
 
-public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable {
+public class DiplocaulusEntity extends Animal implements GeoEntity, Bucketable {
 
 
     private static final EntityDataAccessor<Boolean> FROM_BUCKET = SynchedEntityData.defineId(DiplocaulusEntity.class, EntityDataSerializers.BOOLEAN);
@@ -119,7 +118,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
     private static final EntityDataAccessor<Boolean> FLOATING = SynchedEntityData.defineId(DiplocaulusEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Boolean> EATING = SynchedEntityData.defineId(DiplocaulusEntity.class, EntityDataSerializers.BOOLEAN);
-    private final AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
     private boolean needsSurface;
     private int huntDelay;
     private int eatDelay;
@@ -251,11 +250,11 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
                     --this.eatDelay;
                 } else {
                     Vec3 mouthPos = this.calculateMouthPos();
-                    ((ServerLevel) this.level).sendParticles(new ItemParticleOption(ParticleTypes.ITEM, this.getMainHandItem()), mouthPos.x(), mouthPos.y(), mouthPos.z(), 2, 0.0D, 0.1D, 0.0D, 0.05D);
+                    ((ServerLevel) this.level()).sendParticles(new ItemParticleOption(ParticleTypes.ITEM, this.getMainHandItem()), mouthPos.x(), mouthPos.y(), mouthPos.z(), 2, 0.0D, 0.1D, 0.0D, 0.05D);
 
 
                     if (--this.eatTime <= 0) {
-                        this.eat(this.level, this.getMainHandItem());
+                        this.eat(this.level(), this.getMainHandItem());
                         this.setEating(false);
                     }
                 }
@@ -267,7 +266,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
                         } else {
                             this.setNeedsSurface(true);
                         }
-                    } else if (this.isOnGround()) {
+                    } else if (this.onGround()) {
                         this.startEating();
                     }
                 }
@@ -290,7 +289,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
         public ChiselBlockGoal(DiplocaulusEntity Diplocaulus) {
             this.mob = Diplocaulus;
-            this.level = Diplocaulus.level;
+            this.level = Diplocaulus.level();
             this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK, Goal.Flag.JUMP));
         }
 
@@ -365,7 +364,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
     @Override
     public ItemStack eat(Level level, ItemStack itemStack) {
         if (itemStack.is(ModItems.GRUB.get())) {
-            if (!this.level.isClientSide && this.isAlive()) {
+            if (!this.level().isClientSide && this.isAlive()) {
 
 
                 this.spawnAtLocation(ModItems.DIPLOSLIME.get());
@@ -405,12 +404,12 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
             return;
         }
 
-        if (this.equipItemIfPossible(itemStack)) {
+        if (!this.equipItemIfPossible(itemStack).isEmpty()) {
             int count = itemStack.getCount();
 
             if (count > 1) {
-                ItemEntity extraItems = new ItemEntity(this.level, this.getX(), this.getY(), this.getZ(), itemStack.split(count - 1));
-                this.level.addFreshEntity(extraItems);
+                ItemEntity extraItems = new ItemEntity(this.level(), this.getX(), this.getY(), this.getZ(), itemStack.split(count - 1));
+                this.level().addFreshEntity(extraItems);
             }
             this.onItemPickup(itemEntity);
             this.take(itemEntity, itemStack.getCount());
@@ -439,7 +438,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
             this.moveRelative(this.getSpeed(), speed);
             this.move(MoverType.SELF, this.getDeltaMovement());
             this.setDeltaMovement(this.getDeltaMovement().scale(0.9D));
-            this.calculateEntityAnimation(this, false);
+            this.calculateEntityAnimation(false);
         } else {
             super.travel(speed);
         }
@@ -500,7 +499,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
     @Override
     public AgeableMob getBreedOffspring(ServerLevel level, AgeableMob ageableMob) {
-        DiplocaulusEntity Diplocaulus = ModEntityTypes.DIPLOCAULUS.get().create(level);
+        DiplocaulusEntity Diplocaulus = ModEntityTypes.DIPLOCAULUS.get().create(level());
         return Diplocaulus;
     }
 
@@ -520,7 +519,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
         spawnGroupData = super.finalizeSpawn(levelAccessor, difficultyInstance, mobSpawnType, spawnGroupData, p_146750_);
         if (mobSpawnType.equals(MobSpawnType.SPAWNER) && this.random.nextFloat() <= 0.2F) {
             for (int i = 0; i < this.random.nextInt(1, 4); i++) {
-                DiplocaulusEntity baby = ModEntityTypes.DIPLOCAULUS.get().create(this.level);
+                DiplocaulusEntity baby = ModEntityTypes.DIPLOCAULUS.get().create(this.level());
                 baby.moveTo(this.getX(), this.getY(), this.getZ(), this.getYRot(), 0.0F);
                 baby.setBaby(true);
                 levelAccessor.addFreshEntity(baby);
@@ -529,38 +528,38 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
         return spawnGroupData;
     }
 
-    private <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
+    private PlayState predicate(AnimationState<DiplocaulusEntity> state) {
         if (this.isInWater()) {
             if (this.isFloating()) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
             }
             return PlayState.CONTINUE;
         } else {
             if (this.isEating()) {
                 if (this.getMainHandItem().is(ModItems.DIPLOSLIME.get())) {
-                    event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                    state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
                 } else {
-                    event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                    state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
                 }
                 return PlayState.CONTINUE;
-            } else if (event.isMoving()) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+            } else if (state.isMoving()) {
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
                 return PlayState.CONTINUE;
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
                 return PlayState.CONTINUE;
             }
         }
     }
 
-    private <E extends IAnimatable> PlayState floatingHandsPredicate(AnimationEvent<E> event) {
+    private PlayState floatingHandsPredicate(AnimationState<DiplocaulusEntity> state) {
         if (this.isFloating()) {
             if (this.isEating() && this.eatDelay <= 0) {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.PLAY_ONCE));
+                state.getController().setAnimation(RawAnimation.begin().thenPlay("swim"));
             } else {
-                event.getController().setAnimation(new AnimationBuilder().addAnimation("swim", ILoopType.EDefaultLoopTypes.LOOP));
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
             }
             return PlayState.CONTINUE;
         }
@@ -568,14 +567,14 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController<>(this, "controller", 4, this::predicate));
-        data.addAnimationController(new AnimationController<>(this, "floating_hands_controller", 10, this::floatingHandsPredicate));
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller", 4, this::predicate));
+        controllers.add(new AnimationController<>(this, "floating_hands_controller", 10, this::floatingHandsPredicate));
     }
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
     public boolean isHungryAt(ItemStack foodStack) {
@@ -585,17 +584,18 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
     private void rejectFood() {
         if (!this.getMainHandItem().isEmpty()) {
-            ItemEntity itemEntity = new ItemEntity(this.level, this.getX(), this.getY(), this.getZ(), this.getMainHandItem().copy());
+            ItemEntity itemEntity = new ItemEntity(this.level(), this.getX(), this.getY(), this.getZ(), this.getMainHandItem().copy());
             itemEntity.setPickUpDelay(40);
             itemEntity.setThrower(this.getUUID());
+            itemEntity.getPersistentData().putUUID("BygoneRejector", this.getUUID());
             this.getMainHandItem().shrink(1);
-            this.level.addFreshEntity(itemEntity);
+            this.level().addFreshEntity(itemEntity);
         }
     }
 
     public boolean rejectedItem(ItemEntity itemEntity) {
-        if (itemEntity.getThrower() != null) {
-            return itemEntity.getThrower().equals(this.getUUID());
+        if (itemEntity.getPersistentData().hasUUID("BygoneRejector")) {
+            return itemEntity.getPersistentData().getUUID("BygoneRejector").equals(this.getUUID());
         }
         return false;
     }
@@ -685,10 +685,10 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
                                 this.mob.setXRot(this.rotlerp(this.mob.getXRot(), xRot, 45.0F));
                             }
 
-                            BlockPos wantedPos = new BlockPos(this.wantedX, this.wantedY, this.wantedZ);
-                            BlockState wantedBlockState = this.mob.level.getBlockState(wantedPos);
+                            BlockPos wantedPos = BlockPos.containing(this.wantedX, this.wantedY, this.wantedZ);
+                            BlockState wantedBlockState = this.mob.level().getBlockState(wantedPos);
 
-                            if (d1 > (double) this.mob.maxUpStep && d0 * d0 + d2 * d2 < 4.0F && d1 <= 1.0D && wantedBlockState.getFluidState().isEmpty()) {
+                            if (d1 > (double) this.mob.maxUpStep() && d0 * d0 + d2 * d2 < 4.0F && d1 <= 1.0D && wantedBlockState.getFluidState().isEmpty()) {
                                 this.mob.getJumpControl().jump();
                                 this.mob.setSpeed(speed);
                             }
@@ -876,7 +876,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
         @Override
         public boolean canUse() {
-            return DiplocaulusEntity.this.isAlive() && DiplocaulusEntity.this.needsSurface() && !DiplocaulusEntity.this.isOnGround();
+            return DiplocaulusEntity.this.isAlive() && DiplocaulusEntity.this.needsSurface() && !DiplocaulusEntity.this.onGround();
         }
 
         @Override
@@ -892,7 +892,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
         @Override
         public void tick() {
-            if (this.targetPos == null || !DiplocaulusEntity.this.getLevel().getBlockState(new BlockPos(this.targetPos)).isAir()) {
+            if (this.targetPos == null || !DiplocaulusEntity.this.level().getBlockState(BlockPos.containing(this.targetPos)).isAir()) {
                 if (DiplocaulusEntity.this.getMainHandItem().is(ModItems.DIPLOSLIME.get())) {
                     this.targetPos = LandRandomPos.getPos(DiplocaulusEntity.this, 15, 7);
                     this.goingLand = true;
@@ -907,7 +907,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
                 DiplocaulusEntity.this.move(MoverType.SELF, DiplocaulusEntity.this.getDeltaMovement());
 
                 if (this.goingLand) {
-                    if (!DiplocaulusEntity.this.isInWater() && DiplocaulusEntity.this.isOnGround()) {
+                    if (!DiplocaulusEntity.this.isInWater() && DiplocaulusEntity.this.onGround()) {
                         this.stop();
                     }
                 } else {
@@ -929,7 +929,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
         public void tickTimeout() {
             if (this.timeoutTimer % 2 == 0) {
-                ((ServerLevel) DiplocaulusEntity.this.getLevel()).sendParticles(ParticleTypes.BUBBLE, DiplocaulusEntity.this.getRandomX(0.6D), DiplocaulusEntity.this.getY(), DiplocaulusEntity.this.getRandomZ(0.6D), 2, 0.0D, 0.1D, 0.0D, 0.0D);
+                ((ServerLevel) DiplocaulusEntity.this.level()).sendParticles(ParticleTypes.BUBBLE, DiplocaulusEntity.this.getRandomX(0.6D), DiplocaulusEntity.this.getY(), DiplocaulusEntity.this.getRandomZ(0.6D), 2, 0.0D, 0.1D, 0.0D, 0.0D);
             }
             if (this.timeoutTimer <= 0) {
 
@@ -951,7 +951,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
             BlockPos airPos = null;
 
             for (BlockPos blockPos : blocksInRadius) {
-                if (DiplocaulusEntity.this.level.getBlockState(blockPos).isAir()) {
+                if (DiplocaulusEntity.this.level().getBlockState(blockPos).isAir()) {
                     airPos = blockPos;
                     break;
                 }
@@ -971,14 +971,14 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
             if (!DiplocaulusEntity.this.getMainHandItem().isEmpty()) {
                 return false;
             } else {
-                List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level.getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
+                List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level().getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
                 return !itemsInRadius.isEmpty();
             }
         }
 
         @Override
         public void tick() {
-            List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level.getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
+            List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level().getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
             ItemStack handStack = DiplocaulusEntity.this.getMainHandItem();
             if (handStack.isEmpty() && !itemsInRadius.isEmpty()) {
                 Path path = DiplocaulusEntity.this.getNavigation().createPath(itemsInRadius.get(0), 0);
@@ -988,7 +988,7 @@ public class DiplocaulusEntity extends Animal implements IAnimatable, Bucketable
 
         @Override
         public void start() {
-            List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level.getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
+            List<ItemEntity> itemsInRadius = DiplocaulusEntity.this.level().getEntitiesOfClass(ItemEntity.class, DiplocaulusEntity.this.getBoundingBox().inflate(8.0D, 8.0D, 8.0D), (itemEntity -> DiplocaulusEntity.this.wantsToPickUp(itemEntity.getItem()) && !DiplocaulusEntity.this.rejectedItem(itemEntity)));
             if (!itemsInRadius.isEmpty()) {
                 Path path = DiplocaulusEntity.this.getNavigation().createPath(itemsInRadius.get(0), 0);
                 DiplocaulusEntity.this.getNavigation().moveTo(path, 1.0D);

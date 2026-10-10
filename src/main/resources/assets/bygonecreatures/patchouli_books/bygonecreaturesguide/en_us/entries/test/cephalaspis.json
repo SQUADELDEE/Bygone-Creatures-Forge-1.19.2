@@ -1,0 +1,18 @@
+{
+  "name": "Cephalaspis",
+  "icon": "bygonecreatures:cephaspawnegg",
+  "category": "bygonecreatures:mobs",
+  "pages": [
+    {
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:cephalaspis{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Cephalaspis",
+      "scale": 1.0,
+      "rotate": true
+    },
+    {
+      "type": "patchouli:text",
+      "text": "A small armoured fish found in groups along the seabed of ocean biomes, where it pootles about close to the bottom and occasionally roots through the substrate. When killed it drops its skull, which can be used in the biter block recipe. It can also be bucketed."
+    }
+  ]
+}

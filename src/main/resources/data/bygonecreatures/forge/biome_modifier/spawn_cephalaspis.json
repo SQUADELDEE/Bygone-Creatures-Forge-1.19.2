@@ -1,12 +1,20 @@
 {
   "type": "forge:add_spawns",
   "biomes": [
-    "minecraft:river"
+    "minecraft:ocean",
+    "minecraft:deep_ocean",
+    "minecraft:cold_ocean",
+    "minecraft:deep_cold_ocean",
+    "minecraft:lukewarm_ocean",
+    "minecraft:deep_lukewarm_ocean",
+    "minecraft:warm_ocean",
+    "minecraft:frozen_ocean",
+    "minecraft:deep_frozen_ocean"
   ],
   "spawners": {
     "type": "bygonecreatures:cephalaspis",
-    "weight": 30,
-    "minCount": 1,
-    "maxCount": 3
+    "weight": 40,
+    "minCount": 3,
+    "maxCount": 5
   }
 }

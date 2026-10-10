@@ -39,15 +39,14 @@ import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraftforge.common.IForgeShearable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -55,7 +54,7 @@ import java.util.function.Predicate;
 
 import static net.jacob.bygonecreatures.item.ModItems.PROTOSHED;
 
-public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeShearable {
+public class CurlyCoatEntity extends Animal implements GeoEntity, IForgeShearable {
     public boolean isOnFire() {
         return false;
     }
@@ -104,7 +103,7 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
     }
 
     public int eggTime = this.random.nextInt(6000) + 6000;
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
     private net.minecraft.world.entity.AgeableMob AgeableMob;
 
     public CurlyCoatEntity(EntityType<? extends Animal> entityType, Level level) {
@@ -152,7 +151,7 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
     @Override
     public net.minecraft.world.entity.AgeableMob getBreedOffspring(ServerLevel serverLevel, net.minecraft.world.entity.AgeableMob mob) {
 
-        return ModEntityTypes.CURLYCOAT.get().create(level);
+        return ModEntityTypes.CURLYCOAT.get().create(level());
     }
 
     @Override
@@ -170,7 +169,7 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
         super.aiStep();
 
 
-//        if (!this.level.isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
+//        if (!this.level().isClientSide && this.isAlive() && !this.isBaby() && --this.eggTime <= 0) {
 //            ItemStack eggItem = new ItemStack(Items.EGG);
 //            this.playSound(SoundEvents.CHICKEN_EGG, 1.0F, (this.random.nextFloat() - this.random.nextFloat()) * 0.2F + 1.0F);
 //            this.spawnAtLocation(PROTOSHED.get());
@@ -180,14 +179,14 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
 
 
 
-        if (this.level.isClientSide) {
+        if (this.level().isClientSide) {
             if (this.random.nextInt(24) == 0 && !this.isSilent()) {
-                this.level.playLocalSound(this.getX() + 0.5D, this.getY() + 0.5D, this.getZ() + 0.5D, SoundEvents.BLAZE_BURN, this.getSoundSource(), 1.0F + this.random.nextFloat(), this.random.nextFloat() * 0.7F + 0.3F, false);
+                this.level().playLocalSound(this.getX() + 0.5D, this.getY() + 0.5D, this.getZ() + 0.5D, SoundEvents.BLAZE_BURN, this.getSoundSource(), 1.0F + this.random.nextFloat(), this.random.nextFloat() * 0.7F + 0.3F, false);
             }
 
             if (particleCooldown <= 0) {
             for(int i = 0; i < 2; ++i) {
-                this.level.addParticle(ParticleTypes.FLAME, this.getRandomX(0.5D), this.getRandomY() + 1.0D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
+                this.level().addParticle(ParticleTypes.FLAME, this.getRandomX(0.5D), this.getRandomY() + 1.0D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
             }
             particleCooldown = PARTICLE_COOLDOWN_TIME;
             } else {
@@ -199,12 +198,12 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
 
             if(!this.isBaby()) {
                 for (int i = 0; i < 2; ++i) {
-                    this.level.addParticle(ParticleTypes.LARGE_SMOKE, this.getRandomX(0.5D), this.getRandomY() + 1.5D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
+                    this.level().addParticle(ParticleTypes.LARGE_SMOKE, this.getRandomX(0.5D), this.getRandomY() + 1.5D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
                 }
 
             } else {
                 for (int i = 0; i < 2; ++i) {
-                    this.level.addParticle(ParticleTypes.SMOKE, this.getRandomX(0.5D), this.getRandomY() + 0.6D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
+                    this.level().addParticle(ParticleTypes.SMOKE, this.getRandomX(0.5D), this.getRandomY() + 0.6D, this.getRandomZ(0.5D), 0.0D, 0.0D, 0.0D);
                 }
 
             }
@@ -218,23 +217,23 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
 
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    public PlayState predicate(AnimationState<CurlyCoatEntity> state) {
+        if (state.isMoving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
             return PlayState.CONTINUE;
         }
         if (this.isSleeping()){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("sleep", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("sleep"));
             return PlayState.CONTINUE;
         }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
     }
 
@@ -351,7 +350,7 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
 
         public ChewScrubGoal(CurlyCoatEntity auk) {
             this.mob = auk;
-            this.level = auk.level;
+            this.level = auk.level();
             this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK, Goal.Flag.JUMP));
         }
 
@@ -439,9 +438,9 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
     @NotNull
     public List<ItemStack> onSheared(Player player,  ItemStack item, Level world, BlockPos pos, int fortune, SoundSource source) {
         this.setFluff(false);
-        this.level.gameEvent(player, GameEvent.SHEAR, pos);
+        this.level().gameEvent(player, GameEvent.SHEAR, pos);
         this.fluffGrowTime = 18000 + this.getRandom().nextInt(6000);
-        this.level.playSound(null, this, SoundEvents.SHEEP_SHEAR, source, 1.0F, 1.0F);
+        this.level().playSound(null, this, SoundEvents.SHEEP_SHEAR, source, 1.0F, 1.0F);
         return List.of(new ItemStack(Blocks.RED_WOOL));
     }
 
@@ -451,8 +450,8 @@ public class CurlyCoatEntity extends Animal implements IAnimatable, IForgeSheara
 
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
 }

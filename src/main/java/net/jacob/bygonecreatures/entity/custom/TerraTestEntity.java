@@ -13,7 +13,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
 
 import java.util.logging.Level;
 
@@ -109,7 +108,7 @@ import java.util.logging.Level;
 //        Item itemForTaming = Items.APPLE;
 //
 //        if (item == itemForTaming && !isTame()) {
-//            if (this.level.isClientSide) {
+//            if (this.level().isClientSide) {
 //                return InteractionResult.CONSUME;
 //            } else {
 //                if (!player.getAbilities().instabuild) {
@@ -117,11 +116,11 @@ import java.util.logging.Level;
 //                }
 //
 //                if (!ForgeEventFactory.onAnimalTame(this, player)) {
-//                    if (!this.level.isClientSide) {
+//                    if (!this.level().isClientSide) {
 //                        super.tame(player);
 //                        this.navigation.recomputePath();
 //                        this.setTarget(null);
-//                        this.level.broadcastEntityEvent(this, (byte)7);
+//                        this.level().broadcastEntityEvent(this, (byte)7);
 //                        setSitting(true);
 //                    }
 //                }
@@ -130,7 +129,7 @@ import java.util.logging.Level;
 //            }
 //        }
 //
-//        if(isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND) {
+//        if(isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND) {
 //            setSitting(!isSitting());
 //            return InteractionResult.SUCCESS;
 //        }

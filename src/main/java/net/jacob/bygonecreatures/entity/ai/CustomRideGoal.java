@@ -70,7 +70,7 @@ public class CustomRideGoal extends Goal {
         if(strafe){
             tameableEntity.xxa = player.xxa * 0.15F;
         }
-        tameableEntity.maxUpStep = 1;
+        tameableEntity.setMaxUpStep(1);
         tameableEntity.getMoveControl().setWantedPosition(x, y, z, speed);
     }
 

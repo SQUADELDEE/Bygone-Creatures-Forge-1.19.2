@@ -1,0 +1,18 @@
+{
+  "name": "Terror Bird",
+  "icon": "bygonecreatures:terrorbirdspawnegg",
+  "category": "bygonecreatures:mobs",
+  "pages": [
+    {
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:terrorbird{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Terror Bird",
+      "scale": 1.0,
+      "rotate": true
+    },
+    {
+      "type": "patchouli:text",
+      "text": "Tamed with 13 beef and found in plains biomes, where each wild one lives at a ground nest of one or two eggs that it patrols and fiercely guards: stay away from the nest, and never break an egg. They can be mounted and ridden at high speed, and will also fight alongside you. When tamed they receive a boost in health and speed. They are bred with glyptodon meat! Made to sit or stand by shift clicking. They can be healed with beef."
+    }
+  ]
+}

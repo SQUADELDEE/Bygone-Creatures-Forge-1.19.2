@@ -3,12 +3,13 @@ package net.jacob.bygonecreatures.entity.client;
 import net.jacob.bygonecreatures.BygoneCreatures;
 import net.jacob.bygonecreatures.entity.custom.PeccaryEntity;
 import net.minecraft.resources.ResourceLocation;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.processor.IBone;
-import software.bernie.geckolib3.model.AnimatedGeoModel;
-import software.bernie.geckolib3.model.provider.data.EntityModelData;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.constant.DataTickets;
+import software.bernie.geckolib.model.data.EntityModelData;
+import software.bernie.geckolib.cache.object.GeoBone;
+import software.bernie.geckolib.model.GeoModel;
 
-public class PeccaryModel extends AnimatedGeoModel<PeccaryEntity> {
+public class PeccaryModel extends GeoModel<PeccaryEntity> {
 
     @Override
     public ResourceLocation getModelResource(PeccaryEntity object) {
@@ -26,13 +27,12 @@ public class PeccaryModel extends AnimatedGeoModel<PeccaryEntity> {
     }
 
     @Override
-    public void setLivingAnimations(PeccaryEntity entity, Integer uniqueID, AnimationEvent customPredicate) {
-        super.setCustomAnimations(entity, uniqueID, customPredicate);
-        IBone head_rotation = this.getAnimationProcessor().getBone("headhold");
-
-        EntityModelData extraData = (EntityModelData) customPredicate.getExtraDataOfType(EntityModelData.class).get(0);
-
-        head_rotation.setRotationX(extraData.headPitch * ((float) Math.PI / 180F));
-        head_rotation.setRotationY(extraData.netHeadYaw * ((float) Math.PI / 180F));
+    public void setCustomAnimations(PeccaryEntity entity, long instanceId, AnimationState<PeccaryEntity> animationState) {
+        super.setCustomAnimations(entity, instanceId, animationState);
+        EntityModelData entityData = animationState.getData(DataTickets.ENTITY_MODEL_DATA);
+        getBone("headhold").ifPresent(head_rotation -> {
+            head_rotation.setRotX(entityData.headPitch() * ((float) Math.PI / 180F));
+            head_rotation.setRotY(entityData.netHeadYaw() * ((float) Math.PI / 180F));
+        });
     }
 }

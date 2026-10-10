@@ -1,0 +1,18 @@
+{
+  "name": "Kem Kem Plesiosaur",
+  "icon": "bygonecreatures:kemkemspawnegg",
+  "category": "bygonecreatures:mobs",
+  "pages": [
+    {
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:kemkem{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Kem Kem Plesiosaur",
+      "scale": 1.0,
+      "rotate": true
+    },
+    {
+      "type": "patchouli:text",
+      "text": "This marine reptile can often be found swimming in rivers, where it hunts salmon on a cooldown. It can be bucketed for transport and later use."
+    }
+  ]
+}

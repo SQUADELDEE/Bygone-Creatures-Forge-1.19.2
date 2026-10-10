@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/dodo.png"],
-      "title": "Dodo"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:dodo{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Dodo",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:smelting",

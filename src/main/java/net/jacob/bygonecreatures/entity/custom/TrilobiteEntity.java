@@ -28,24 +28,23 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.phys.Vec3;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.Random;
 import java.util.logging.Level;
 
-public class TrilobiteEntity extends WaterAnimal implements Bucketable, IAnimatable {
+public class TrilobiteEntity extends WaterAnimal implements Bucketable, GeoEntity {
     private static final EntityDataAccessor<Boolean> CLIMBING = SynchedEntityData.defineId(TrilobiteEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> VARIANT = SynchedEntityData.defineId(TrilobiteEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Boolean> FROM_BUCKET = SynchedEntityData.defineId(TrilobiteEntity.class, EntityDataSerializers.BOOLEAN);
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
 
 
 
@@ -163,14 +162,14 @@ public class TrilobiteEntity extends WaterAnimal implements Bucketable, IAnimata
     @Override
     public void tick() {
         super.tick();
-        if (!this.level.isClientSide()) {
+        if (!this.level().isClientSide()) {
             this.setClimbing(this.horizontalCollision && this.getNavigation().isInProgress());
         }
     }
 
     @Override
     public float getWalkTargetValue(BlockPos blockPos) {
-        return this.level.getBlockState(blockPos).getFluidState().isEmpty() ? 1.0F : 5.0F;
+        return this.level().getBlockState(blockPos).getFluidState().isEmpty() ? 1.0F : 5.0F;
     }
 
     @Override
@@ -191,22 +190,22 @@ public class TrilobiteEntity extends WaterAnimal implements Bucketable, IAnimata
         return Bucketable.bucketMobPickup(player, interactionHand, this).orElse(super.mobInteract(player, interactionHand));
     }
 
-    private <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (this.animationSpeed > 0.03F) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    private PlayState predicate(AnimationState<TrilobiteEntity> state) {
+        if (this.walkAnimation.speed() > 0.03F) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
         } else {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
         }
         return PlayState.CONTINUE;
     }
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController<>(this, "controller", 0, this::predicate));
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller", 0, this::predicate));
     }
 
     @Override
-    public AnimationFactory getFactory() {
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
         return this.factory;
     }
 
@@ -270,7 +269,7 @@ public class TrilobiteEntity extends WaterAnimal implements Bucketable, IAnimata
             Vec3 randomPos = RandomPos.generateRandomPos(this.mob, () -> {
                 BlockPos blockPos = RandomPos.generateRandomDirection(this.mob.getRandom(), 10, 7);
                 BlockPos blockPos1 = RandomPos.generateRandomPosTowardDirection(this.mob, 10, this.mob.getRandom(), blockPos);
-                return RandomPos.moveUpOutOfSolid(blockPos1, this.mob.level.getMaxBuildHeight(), (blockPos2) -> GoalUtils.isSolid(this.mob, blockPos2));
+                return RandomPos.moveUpOutOfSolid(blockPos1, this.mob.level().getMaxBuildHeight(), (blockPos2) -> GoalUtils.isSolid(this.mob, blockPos2));
             });
             return randomPos;
         }

@@ -4,11 +4,11 @@
   "category": "bygonecreatures:mobs",
   "pages": [
     {
-
-      "type": "patchouli:image",
-      "images": ["bygonecreatures:textures/icon/proto.png"],
-      "title": "Protoceratops"
-
+      "type": "patchouli:entity",
+      "entity": "bygonecreatures:protoceratops{ForgeData:{bg_tilt:25.0f}}",
+      "name": "Protoceratops",
+      "scale": 1.0,
+      "rotate": true
     },
     {
       "type": "patchouli:crafting",

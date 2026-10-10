@@ -2,12 +2,17 @@ package net.jacob.bygonecreatures.entity.custom;
 //
 //import net.jacob.bygonecreatures.entity.ai.DragonBodyController;
 //import net.jacob.bygonecreatures.entity.ai.DragonMoveController;
+import net.jacob.bygonecreatures.entity.ai.ArgenAerialBehaviorGoal;
 import net.jacob.bygonecreatures.entity.ai.DragonBodyController;
 import net.jacob.bygonecreatures.entity.ai.DragonMoveController;
 import net.jacob.bygonecreatures.entity.client.KeyMap;
+import net.jacob.bygonecreatures.entity.client.network.BearRoarShakePacket;
+import net.jacob.bygonecreatures.entity.client.network.LuggageNetworkHandler;
 import net.jacob.bygonecreatures.entity.util.BCConfig;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -17,6 +22,7 @@ import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
+import net.minecraft.world.DifficultyInstance;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
@@ -37,22 +43,23 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.BooleanOp;
 import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
-import software.bernie.geckolib3.core.AnimationState;
-import software.bernie.geckolib3.core.IAnimatable;
-import software.bernie.geckolib3.core.PlayState;
-import software.bernie.geckolib3.core.builder.AnimationBuilder;
-import software.bernie.geckolib3.core.builder.ILoopType;
-import software.bernie.geckolib3.core.controller.AnimationController;
-import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
-import software.bernie.geckolib3.core.manager.AnimationData;
-import software.bernie.geckolib3.core.manager.AnimationFactory;
-import software.bernie.geckolib3.util.GeckoLibUtil;
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.AnimationController;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nullable;
 import java.util.List;
@@ -61,34 +68,40 @@ import java.util.UUID;
 
 import static net.minecraft.world.entity.ai.attributes.Attributes.*;
 
-public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnimal, PlayerRideable, IAnimatable {
+public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnimal, PlayerRideable, GeoEntity {
 
 
-    private AnimationFactory factory = GeckoLibUtil.createFactory(this);
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
 
     private static final EntityDataAccessor<Boolean> SITTING =
             SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.BOOLEAN);
 
     @Override
-    public AnimationFactory getFactory() {
-        return this.factory;
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return this.geoCache;
     }
 
 
-    public <E extends IAnimatable> PlayState predicate(AnimationEvent<E> event) {
-        if (event.isMoving() && (this.isOnGround())) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("walk", ILoopType.EDefaultLoopTypes.LOOP));
+    private static final float GLIDE_DESCENT_THRESHOLD = -0.08F;
+
+    public PlayState predicate(AnimationState<ArgenEntity> state) {
+        if (isDiving()) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("glide"));
             return PlayState.CONTINUE;
         }
 
-//        if (event.isMoving() && this.hasControllingPassenger() && !(this.isOnGround())) {
+        if (state.isMoving() && (this.onGround())) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("walk"));
+            return PlayState.CONTINUE;
+        }
+
         if (isFlying()) {
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("fly", ILoopType.EDefaultLoopTypes.LOOP));
-            return PlayState.CONTINUE;
-        }
-
-        if (isFlying() && event.isMoving()){
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("glide", ILoopType.EDefaultLoopTypes.LOOP));
+            if (getDeltaMovement().y < GLIDE_DESCENT_THRESHOLD) {
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("glide"));
+            } else {
+                //updated for 1.20.1 version... s
+                state.getController().setAnimation(RawAnimation.begin().thenLoop("flymodern"));
+            }
             return PlayState.CONTINUE;
         }
 ////
@@ -97,15 +110,15 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 //            return PlayState.CONTINUE;
 //        }
 
-        event.getController().setAnimation(new AnimationBuilder().addAnimation("idle", ILoopType.EDefaultLoopTypes.LOOP));
+        state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
     }
 
-    private PlayState attackPredicate(AnimationEvent event) {
+    private PlayState attackPredicate(AnimationState<ArgenEntity> state) {
 
-        if(this.swinging && event.getController().getAnimationState().equals(AnimationState.Stopped)) {
-            event.getController().markNeedsReload();
-            event.getController().setAnimation(new AnimationBuilder().addAnimation("bite", ILoopType.EDefaultLoopTypes.PLAY_ONCE));
+        if(this.swinging && state.getController().getAnimationState().equals(AnimationController.State.STOPPED)) {
+            state.getController().forceAnimationReset();
+            state.getController().setAnimation(RawAnimation.begin().thenPlay("bite"));
             this.swinging = false;
         }
 
@@ -116,10 +129,10 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
 
     @Override
-    public void registerControllers(AnimationData data) {
-        data.addAnimationController(new AnimationController(this, "controller",
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "controller",
                 4, this::predicate));
-        data.addAnimationController(new AnimationController(this, "attackController",
+        controllers.add(new AnimationController<>(this, "attackController",
                 0, this::attackPredicate));
 
     }
@@ -144,6 +157,40 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     private static final EntityDataAccessor<Boolean> DATA_FLYING = SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Boolean> DATA_SADDLED = SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> DATA_AGE = SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.INT);
+    // Whole-body flight pitch: derived from actual vertical vs horizontal velocity (climbing
+    // vs diving), not from where the rider is looking. Synced so both the model's own root-bone
+    // rotation and the rider-fusion render hook (ArgenRiderPoseHandler) can read it client-side.
+    private static final EntityDataAccessor<Float> DATA_BODY_PITCH = SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.FLOAT);
+    private static final float MAX_BODY_PITCH = 45.0F;
+    private static final float BODY_PITCH_SMOOTHING = 0.12F; // per-tick lerp factor, avoids snapping
+
+    // Dive attack. DATA_DIVING is set by the server and read by every client (movement,
+    // animation, trail particles); the key itself is client-only and reaches the server as
+    // ArgenDivePacket -> setDiveKeyHeld().
+    private static final EntityDataAccessor<Boolean> DATA_DIVING = SynchedEntityData.defineId(ArgenEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final int DIVE_MIN_ALTITUDE = 14;          // blocks of clear air under the bird needed to start
+    private static final float DIVE_MIN_LOOK_PITCH = 20.0F;   // rider must be looking at least this far down to start
+    private static final float DIVE_MIN_STEEPNESS = 40.0F;    // once diving, never steer shallower than this
+    private static final float DIVE_START_SPEED = 0.5F;       // blocks/tick
+    private static final float DIVE_ACCEL = 0.06F;            // blocks/tick gained per tick
+    private static final float DIVE_MAX_SPEED = 2.0F;
+    private static final int DIVE_CANCEL_COOLDOWN = 40;
+    private static final int DIVE_IMPACT_COOLDOWN = 100;
+    private static final double DIVE_IMPACT_RADIUS = 5.0D;
+    private static final float DIVE_BASE_DAMAGE = 6.0F;
+    private static final float DIVE_DAMAGE_PER_BLOCK = 0.4F;  // extra damage per block fallen during the dive
+    private static final float DIVE_MAX_DAMAGE = 24.0F;
+    private static final double DIVE_KNOCKBACK = 1.6D;
+    private static final double DIVE_SHAKE_RADIUS = 24.0D;
+    private static final float MAX_DIVE_BODY_PITCH = 75.0F;
+    private static final float DIVE_PITCH_SMOOTHING = 0.25F;
+    private static final int SHOCKWAVE_RING_POINTS = 32;
+
+    private boolean diveKeyHeld;   // server
+    private int diveCooldown;      // server
+    private int diveTicks;         // server
+    private double diveStartY;     // server
+    private float diveSpeed;       // client (the rider's client moves the bird)
 
     // data NBT IDs
     public static final String NBT_BREED = "Breed";
@@ -165,12 +212,28 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         super(type, level);
 
         // enables walking over blocks
-        maxUpStep = 1;
+        this.setMaxUpStep(1);
         noCulling = true;
 
         moveControl = new DragonMoveController(this);
 //        animator = level.isClientSide? new DragonAnimator(this) : null;
 //        breed = BreedRegistry.getFallback();
+    }
+
+    // Wherever the entity first spawns (nest structure or spawn egg) — the point
+    // ArgenAerialBehaviorGoal patrols around and returns to. Nullable until first spawn/load.
+    private BlockPos homePos;
+
+    @Override
+    public SpawnGroupData finalizeSpawn(ServerLevelAccessor levelAccessor, DifficultyInstance difficultyInstance, MobSpawnType mobSpawnType, @Nullable SpawnGroupData spawnGroupData, @Nullable CompoundTag dataTag)
+    {
+        if (homePos == null) homePos = blockPosition();
+        return super.finalizeSpawn(levelAccessor, difficultyInstance, mobSpawnType, spawnGroupData, dataTag);
+    }
+
+    public BlockPos getHomePos()
+    {
+        return homePos != null ? homePos : blockPosition();
     }
 
     @Override
@@ -198,6 +261,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         goalSelector.addGoal(1, new SitWhenOrderedToGoal(this));
         goalSelector.addGoal(3, new MeleeAttackGoal(this, 1, true));
 //        goalSelector.addGoal(4, new DragonBabuFollowParent(this, 10));
+        goalSelector.addGoal(4, new ArgenAerialBehaviorGoal(this));
         goalSelector.addGoal(5, new FollowOwnerGoal(this, 1.1, 10f, 3.5f, true));
         this.goalSelector.addGoal(0, new FloatGoal(this));
 
@@ -221,6 +285,8 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         entityData.define(DATA_FLYING, false);
         entityData.define(DATA_SADDLED, false);
         entityData.define(DATA_AGE, 0); // default to adult stage
+        entityData.define(DATA_BODY_PITCH, 0.0F);
+        entityData.define(DATA_DIVING, false);
     }
 
     @Override
@@ -239,6 +305,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
         compound.putBoolean(NBT_SADDLED, isSaddled());
         compound.putInt(NBT_REPRO_COUNT, reproCount);
+        if (homePos != null) compound.put("HomePos", NbtUtils.writeBlockPos(homePos));
     }
 
     @Override
@@ -249,6 +316,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
         setSaddled(compound.getBoolean(NBT_SADDLED));
         this.reproCount = compound.getInt(NBT_REPRO_COUNT);
+        if (compound.contains("HomePos")) homePos = NbtUtils.readBlockPos(compound.getCompound("HomePos"));
 
         entityData.set(DATA_AGE, getAge());
     }
@@ -284,7 +352,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     public void equipSaddle(@Nullable SoundSource source)
     {
         setSaddled(true);
-        level.playSound(null, getX(), getY(), getZ(), SoundEvents.HORSE_SADDLE, getSoundSource(), 1, 1);
+        level().playSound(null, getX(), getY(), getZ(), SoundEvents.HORSE_SADDLE, getSoundSource(), 1, 1);
     }
 
     /**
@@ -309,9 +377,21 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
 
 
+    // Lets AI behavior (e.g. ArgenAerialBehaviorGoal) keep the entity airborne even while
+    // briefly close to the ground - closing in on ground-dwelling prey to grab it, for
+    // instance - without the normal altitude check yanking it out of flight mid-task.
+    // Deliberately not persisted: it's transient AI state, always re-applied each tick
+    // by whatever goal wants it, and should never survive a reload.
+    private boolean forcedFlight;
+
+    public void setForcedFlight(boolean forcedFlight)
+    {
+        this.forcedFlight = forcedFlight;
+    }
+
     public boolean shouldFly()
     {
-        return canFly() && !isInWater() && isHighEnough(ALTITUDE_FLYING_THRESHOLD);
+        return canFly() && !isInWater() && (forcedFlight || isDiving() || isHighEnough(ALTITUDE_FLYING_THRESHOLD));
     }
 
     /**
@@ -332,7 +412,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
     public boolean isServer()
     {
-        return !level.isClientSide;
+        return !level().isClientSide;
     }
 
     @Override
@@ -356,17 +436,231 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
                 getAttribute(FOLLOW_RANGE).setBaseValue(flying? BASE_FOLLOW_RANGE_FLYING : BASE_FOLLOW_RANGE);
 
                 // update pathfinding method
-                if (flying) navigation = new FlyingPathNavigation(this, level);
-                else navigation = new GroundPathNavigation(this, level);
+                if (flying) navigation = new FlyingPathNavigation(this, level());
+                else navigation = new GroundPathNavigation(this, level());
             }
+
+            tickDive();
+
+            if (!isFlying() || onGround())
+            {
+                // onGround() is checked too, not just isFlying() - shouldFly() is purely an
+                // altitude-to-the-ground-below check, so standing on any elevated surface with
+                // 3+ open blocks underneath (a nest platform, a cliff edge) can leave isFlying()
+                // true even while the entity is visibly planted on solid ground. Snap to 0
+                // instantly rather than smoothing back down - otherwise a pitch left over from
+                // just before landing lingers for a few ticks, standing/walking at an angle
+                // until it decays out.
+                entityData.set(DATA_BODY_PITCH, 0.0F);
+            }
+            else
+            {
+                float targetPitch = 0.0F;
+                float pitchSmoothing = BODY_PITCH_SMOOTHING;
+                LivingEntity driver = canBeControlledByRider() ? getControllingPassenger() : null;
+                if (isDiving())
+                {
+                    // Nose-down, matching the steepness travel() actually dives at.
+                    float lookDown = driver != null ? Math.max(driver.getXRot(), DIVE_MIN_STEEPNESS) : DIVE_MIN_STEEPNESS;
+                    targetPitch = -Mth.clamp(lookDown, 0.0F, MAX_DIVE_BODY_PITCH);
+                    pitchSmoothing = DIVE_PITCH_SMOOTHING;
+                }
+                else if (driver != null)
+                {
+                    // Rider-controlled: vertical velocity (travel()'s moveY) only gets set at
+                    // all while the driver is actively holding a movement key AND looking
+                    // up/down at once, so it stays near zero most of the time and the
+                    // velocity-based calc below never picks up a tilt. Read the driver's own
+                    // look-pitch directly instead - the exact same signal that already drives
+                    // moveY - so the tilt responds immediately, not just while that condition
+                    // happens to be true.
+                    double moveForward = Math.min(Math.abs(driver.zza) + Math.abs(driver.xxa), 1.0D);
+                    if (moveForward > 0.0D)
+                    {
+                        targetPitch = Mth.clamp(-driver.getXRot(), -MAX_BODY_PITCH, MAX_BODY_PITCH);
+                    }
+                }
+                else
+                {
+                    Vec3 delta = getDeltaMovement();
+                    double horizontalSpeed = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+                    if (horizontalSpeed > 0.02D || Math.abs(delta.y) > 0.02D)
+                    {
+                        targetPitch = Mth.clamp((float) (Mth.atan2(delta.y, horizontalSpeed) * (180D / Math.PI)), -MAX_BODY_PITCH, MAX_BODY_PITCH);
+                    }
+                }
+                float currentPitch = entityData.get(DATA_BODY_PITCH);
+                entityData.set(DATA_BODY_PITCH, currentPitch + (targetPitch - currentPitch) * pitchSmoothing);
+            }
+        }
+        else if (isDiving())
+        {
+            spawnDiveTrail();
         }
 
     }
 
+    // Altitude/flight half of the dive requirements (the part the HUD hint lights up on);
+    // the rider also has to be looking down and the dive cooldown has to be over.
+    public boolean canStartDive()
+    {
+        return isFlying() && isHighEnough(DIVE_MIN_ALTITUDE);
+    }
+
+    public boolean isDiving()
+    {
+        return entityData.get(DATA_DIVING);
+    }
+
+    // Called (server side) from ArgenDivePacket when the rider presses or releases the dive key.
+    public void setDiveKeyHeld(boolean held)
+    {
+        diveKeyHeld = held;
+        if (!held && isDiving()) endDive(DIVE_CANCEL_COOLDOWN); // letting go pulls out of the dive
+    }
+
+    private void tickDive()
+    {
+        if (diveCooldown > 0) diveCooldown--;
+
+        LivingEntity driver = canBeControlledByRider() ? getControllingPassenger() : null;
+        if (driver == null)
+        {
+            diveKeyHeld = false;
+            if (isDiving()) endDive(DIVE_CANCEL_COOLDOWN);
+            return;
+        }
+
+        if (isDiving())
+        {
+            diveTicks++;
+            // diveTicks guard: don't let the launch frame itself count as an impact
+            if (diveTicks > 2 && (onGround() || verticalCollision || horizontalCollision || isInWater()))
+                diveImpact();
+        }
+        else if (diveKeyHeld && diveCooldown <= 0 && isFlying()
+                && driver.getXRot() >= DIVE_MIN_LOOK_PITCH && isHighEnough(DIVE_MIN_ALTITUDE))
+        {
+            entityData.set(DATA_DIVING, true);
+            diveTicks = 0;
+            diveStartY = getY();
+            level().playSound(null, getX(), getY(), getZ(), SoundEvents.PHANTOM_SWOOP, SoundSource.NEUTRAL, 2.0F, 0.6F);
+        }
+    }
+
+    private void endDive(int cooldown)
+    {
+        entityData.set(DATA_DIVING, false);
+        diveKeyHeld = false; // must release and re-press for another dive
+        diveCooldown = cooldown;
+    }
+
+    private boolean canDiveHit(LivingEntity target)
+    {
+        if (target == this || !target.isAlive() || hasPassenger(target) || target == getOwner()) return false;
+        if (isAlliedTo(target)) return false;
+        return !(target instanceof TamableAnimal pet && pet.isTame() && Objects.equals(pet.getOwnerUUID(), getOwnerUUID()));
+    }
+
+    // Damage alone only angers mobs that happen to have a retaliation goal (and not even those if
+    // the hit lands inside their invulnerability window), so also point the victim straight at
+    // the attacker - the rider if there is one, else the bird. Tamed mobs are left alone: their
+    // AI answers to their owner, not to being hit.
+    private void provoke(LivingEntity victim)
+    {
+        if (!(victim instanceof Mob mob) || mob instanceof TamableAnimal pet && pet.isTame()) return;
+        LivingEntity attacker = getControllingPassenger() instanceof Player rider ? rider : this;
+        if (!mob.canAttack(attacker)) attacker = this;
+        if (!mob.canAttack(attacker)) return;
+        mob.setLastHurtByMob(attacker);
+        mob.setTarget(attacker);
+    }
+
+    private void diveImpact()
+    {
+        ServerLevel server = (ServerLevel) level();
+        double cx = getX(), cy = getY(), cz = getZ();
+
+        float fallen = (float) Math.max(0.0D, diveStartY - cy);
+        float damage = Mth.clamp(DIVE_BASE_DAMAGE + fallen * DIVE_DAMAGE_PER_BLOCK, DIVE_BASE_DAMAGE, DIVE_MAX_DAMAGE);
+        LivingEntity rider = getControllingPassenger();
+        DamageSource source = rider instanceof Player player ? damageSources().playerAttack(player) : damageSources().mobAttack(this);
+
+        AABB area = new AABB(cx - DIVE_IMPACT_RADIUS, cy - 2.0D, cz - DIVE_IMPACT_RADIUS, cx + DIVE_IMPACT_RADIUS, cy + 4.0D, cz + DIVE_IMPACT_RADIUS);
+        for (LivingEntity target : server.getEntitiesOfClass(LivingEntity.class, area, this::canDiveHit))
+        {
+            double dx = target.getX() - cx, dz = target.getZ() - cz;
+            double dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist > DIVE_IMPACT_RADIUS) continue;
+
+            double falloff = 1.0D - 0.6D * (dist / DIVE_IMPACT_RADIUS);
+            if (!target.hurt(source, (float) (damage * falloff))) continue;
+            provoke(target);
+
+            double dirX = dist < 0.01D ? random.nextDouble() - 0.5D : dx / dist;
+            double dirZ = dist < 0.01D ? random.nextDouble() - 0.5D : dz / dist;
+            double resist = 1.0D - Mth.clamp(target.getAttributeValue(KNOCKBACK_RESISTANCE), 0.0D, 1.0D);
+            double push = DIVE_KNOCKBACK * falloff * resist;
+            target.setDeltaMovement(target.getDeltaMovement().add(dirX * push, 0.6D * falloff * resist, dirZ * push));
+            target.hurtMarked = true; // makes the server actually send the new velocity to players
+        }
+
+        // Shockwave: two staggered flat rings of dust racing outward (count 0 = the offset
+        // arguments are a direction, scaled by speed), plus debris and a flash at the centre.
+        // Speed 0.5 with CLOUD's 0.96 drag carries typical particles out to about the AoE radius.
+        for (int i = 0; i < SHOCKWAVE_RING_POINTS; i++)
+        {
+            double angle = i * (Math.PI * 2.0D) / SHOCKWAVE_RING_POINTS;
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            server.sendParticles(ParticleTypes.CLOUD, cx + cos * 1.5D, cy + 0.15D, cz + sin * 1.5D, 0, cos, 0.02D, sin, 0.5D);
+            server.sendParticles(ParticleTypes.POOF, cx + cos * 1.0D, cy + 0.2D, cz + sin * 1.0D, 0, cos, 0.03D, sin, 0.4D);
+        }
+        for (int i = 0; i < SHOCKWAVE_RING_POINTS / 2; i++)
+        {
+            double angle = (i + 0.5D) * (Math.PI * 2.0D) / (SHOCKWAVE_RING_POINTS / 2);
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            server.sendParticles(ParticleTypes.CLOUD, cx + cos * 2.0D, cy + 0.15D, cz + sin * 2.0D, 0, cos, 0.02D, sin, 0.7D);
+        }
+        server.sendParticles(ParticleTypes.EXPLOSION, cx, cy + 0.4D, cz, 3, 1.0D, 0.2D, 1.0D, 0.0D);
+        server.sendParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE, cx, cy + 0.3D, cz, 20, 1.5D, 0.1D, 1.5D, 0.05D);
+
+        level().playSound(null, cx, cy, cz, SoundEvents.GENERIC_EXPLODE, SoundSource.NEUTRAL, 2.0F, 0.7F);
+        LuggageNetworkHandler.CHANNEL.send(
+                PacketDistributor.NEAR.with(() -> new PacketDistributor.TargetPoint(cx, cy, cz, DIVE_SHAKE_RADIUS, server.dimension())),
+                new BearRoarShakePacket());
+
+        endDive(DIVE_IMPACT_COOLDOWN);
+    }
+
+    // Client side. Interpolates along the path travelled this tick so the trail stays continuous
+    // at dive speeds (up to 2 blocks/tick would otherwise leave gaps), with a streak off each
+    // wingtip and a puff down the centreline.
+    private void spawnDiveTrail()
+    {
+        double dx = getX() - xo, dy = getY() - yo, dz = getZ() - zo;
+        int steps = Mth.clamp((int) (Math.sqrt(dx * dx + dy * dy + dz * dz) * 2.0D), 1, 6);
+        double yawRad = Math.toRadians(getYRot());
+        double sideX = Math.cos(yawRad), sideZ = Math.sin(yawRad);
+
+        for (int i = 0; i < steps; i++)
+        {
+            double t = (double) i / steps;
+            double px = xo + dx * t, py = yo + dy * t + 1.3D, pz = zo + dz * t;
+            for (int side = -1; side <= 1; side += 2)
+                level().addParticle(ParticleTypes.CLOUD, px + sideX * side * 2.2D, py, pz + sideZ * side * 2.2D, 0.0D, 0.0D, 0.0D);
+            level().addParticle(ParticleTypes.POOF, px, py - 0.3D, pz, (random.nextDouble() - 0.5D) * 0.05D, 0.0D, (random.nextDouble() - 0.5D) * 0.05D);
+        }
+    }
+
+    public float getBodyPitch()
+    {
+        return entityData.get(DATA_BODY_PITCH);
+    }
 
     public boolean canBeControlledByRider()
     {
-        return getControllingPassenger() instanceof LivingEntity driver && isOwnedBy(driver);
+        LivingEntity driver = getControllingPassenger();
+        return driver != null && isOwnedBy(driver);
     }
 
 
@@ -376,8 +670,9 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     {
         boolean isFlying = isFlying();
         float speed = (float) getAttributeValue(isFlying? FLYING_SPEED : MOVEMENT_SPEED) * 0.225f;
+        boolean riderControlled = canBeControlledByRider();
 
-        if (canBeControlledByRider()) // Were being controlled; override ai movement
+        if (riderControlled) // Were being controlled; override ai movement
         {
             LivingEntity driver = (LivingEntity) getControllingPassenger();
             double moveSideways = vec3.x;
@@ -396,6 +691,16 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
             if (isControlledByLocalInstance()) // Client applies motion
             {
+                if (isDiving())
+                {
+                    diveTravel();
+                    return;
+                }
+                if (diveSpeed > 0.0F) // dive just ended: bleed off the dive's momentum instead of carrying it
+                {
+                    diveSpeed = 0.0F;
+                    setDeltaMovement(getDeltaMovement().scale(0.25D));
+                }
 //                if (isFlying)
 //                {
 //                    moveForward = moveForward > 0? moveForward : 0;
@@ -418,7 +723,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             }
             else if (driver instanceof Player) // other clients recieve animations
             {
-                calculateEntityAnimation(this, true);
+                calculateEntityAnimation(true);
                 setDeltaMovement(Vec3.ZERO);
                 return;
             }
@@ -429,13 +734,48 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             // Move relative to yaw - handled in the move controller or by driver
             moveRelative(speed, vec3);
             move(MoverType.SELF, getDeltaMovement());
-            if (getDeltaMovement().lengthSqr() < 0.1) // we're not actually going anywhere, bob up and down.
-                setDeltaMovement(getDeltaMovement().add(0, Math.sin(tickCount / 4f) * 0.03, 0));
-            setDeltaMovement(getDeltaMovement().scale(0.9f)); // smoothly slow down
 
-            calculateEntityAnimation(this, true);
+            if (riderControlled)
+            {
+                if (getDeltaMovement().lengthSqr() < 0.1) // rider is commanding no movement: gentle hover bob feels natural under direct control
+                    setDeltaMovement(getDeltaMovement().add(0, Math.sin(tickCount / 4f) * 0.03, 0));
+                setDeltaMovement(getDeltaMovement().scale(0.9f)); // smoothly slow down
+            }
+            else if (moveControl instanceof DragonMoveController dragonControl && dragonControl.hasFlightTarget())
+            {
+                setDeltaMovement(getDeltaMovement().scale(0.91f)); // smoothly slow down while actively steering
+            }
+            else
+            {
+                // AI flight with nothing actively steering us: never hover in place like a
+                // parked drone, glide/descend naturally under gravity like a real bird would
+                // until a goal gives us a new destination.
+                Vec3 delta = getDeltaMovement();
+                setDeltaMovement(delta.x * 0.98D, delta.y - 0.03D, delta.z * 0.98D);
+            }
+
+            calculateEntityAnimation(true);
         }
         else super.travel(vec3);
+    }
+
+    // Rider's client only. Accelerates along the rider's look direction (never shallower than
+    // DIVE_MIN_STEEPNESS, so the dive always ends at the ground), using the bird's own yaw so
+    // it banks into turns at the normal body-turn rate rather than snapping.
+    private void diveTravel()
+    {
+        LivingEntity driver = getControllingPassenger();
+        diveSpeed = diveSpeed <= 0.0F
+                ? Mth.clamp((float) getDeltaMovement().length(), DIVE_START_SPEED, DIVE_MAX_SPEED)
+                : Math.min(DIVE_MAX_SPEED, diveSpeed + DIVE_ACCEL);
+
+        double pitchRad = Math.toRadians(Mth.clamp(driver.getXRot(), DIVE_MIN_STEEPNESS, 85.0F));
+        double yawRad = Math.toRadians(getYRot());
+        Vec3 dir = new Vec3(-Math.sin(yawRad) * Math.cos(pitchRad), -Math.sin(pitchRad), Math.cos(yawRad) * Math.cos(pitchRad));
+
+        setDeltaMovement(dir.scale(diveSpeed));
+        move(MoverType.SELF, getDeltaMovement());
+        calculateEntityAnimation(true);
     }
 
     private int meatFeedings;
@@ -477,9 +817,9 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             meatFeedings++;
             if (meatFeedings > 9) {
                 this.tame(player);
-                this.level.broadcastEntityEvent(this, (byte) 7);
+                this.level().broadcastEntityEvent(this, (byte) 7);
             } else {
-                this.level.broadcastEntityEvent(this, (byte) 6);
+                this.level().broadcastEntityEvent(this, (byte) 6);
             }
             return InteractionResult.SUCCESS;
         }
@@ -500,13 +840,13 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
 //
 
-        if(player.isShiftKeyDown() && isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND && !isSitting()) {
+        if(player.isShiftKeyDown() && isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND && !isSitting()) {
             player.sendSystemMessage(Component.literal(player.getName().getString() + " Ordered Argentavis to wait"));
             setSitting(!isSitting());
             return InteractionResult.SUCCESS;
         }
 
-        if(player.isShiftKeyDown() && isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND && isSitting()) {
+        if(player.isShiftKeyDown() && isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND && isSitting()) {
             player.sendSystemMessage(Component.literal(player.getName().getString() + " Ordered Argentavis to follow and ready for mounting"));
             setSitting(!isSitting());
             return InteractionResult.SUCCESS;
@@ -523,12 +863,12 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
 
 
 
-//        if(player.isShiftKeyDown() && isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND) {
+//        if(player.isShiftKeyDown() && isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND) {
 //            setInSittingPose(false);
 //            return InteractionResult.SUCCESS;
 //        }
 
-//        if(isTame() && !this.level.isClientSide && hand == InteractionHand.MAIN_HAND) {
+//        if(isTame() && !this.level().isClientSide && hand == InteractionHand.MAIN_HAND) {
 //            setSitting(!isSitting());
 //            return InteractionResult.SUCCESS;
 //        }
@@ -552,10 +892,10 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     public double getAltitude(int limit)
     {
         var pointer = blockPosition().mutable().move(0, -1, 0);
-        var min = level.dimensionType().minY();
+        var min = level().dimensionType().minY();
         var i = 0;
 
-        while(i <= limit && pointer.getY() > min && !level.getBlockState(pointer).getMaterial().isSolid())
+        while(i <= limit && pointer.getY() > min && !level().getBlockState(pointer).isSolid())
             pointer.setY(getBlockY() - ++i);
 
         return i;
@@ -566,7 +906,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
      */
     public double getAltitude()
     {
-        return getAltitude(level.getMaxBuildHeight());
+        return getAltitude(level().getMaxBuildHeight());
     }
 
     public boolean isHighEnough(int height)
@@ -665,11 +1005,11 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             navigation.stop();
             setTarget(null);
             setOwnerUUID(player.getUUID());
-            level.broadcastEntityEvent(this, (byte) 7);
+            level().broadcastEntityEvent(this, (byte) 7);
         }
         else
         {
-            level.broadcastEntityEvent(this, (byte) 6);
+            level().broadcastEntityEvent(this, (byte) 6);
         }
     }
 
@@ -746,7 +1086,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     @Override
     public boolean doHurtTarget(Entity entityIn)
     {
-        boolean attacked = entityIn.hurt(DamageSource.mobAttack(this), (float) getAttribute(ATTACK_DAMAGE).getValue());
+        boolean attacked = entityIn.hurt(this.damageSources().mobAttack(this), (float) getAttribute(ATTACK_DAMAGE).getValue());
 
         if (attacked) doEnchantDamageEffects(this, entityIn);
 
@@ -762,7 +1102,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             float volume = 0.3f + (1 - speed) * 0.2f;
             pitch *= getVoicePitch();
             volume *= getSoundVolume();
-            level.playLocalSound(getX(), getY(), getZ(), getWingsSound(), SoundSource.VOICE, volume, pitch, true);
+            level().playLocalSound(getX(), getY(), getZ(), getWingsSound(), SoundSource.VOICE, volume, pitch, true);
         }
     }
 
@@ -819,10 +1159,10 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
      * Pigs, Horses, and Boats are generally "steered" by the controlling passenger.
      */
     @Override
-    public Entity getControllingPassenger()
+    public LivingEntity getControllingPassenger()
     {
         List<Entity> list = getPassengers();
-        return list.isEmpty()? null : list.get(0);
+        return !list.isEmpty() && list.get(0) instanceof LivingEntity livingEntity ? livingEntity : null;
     }
 
     public void setRidingPlayer(Player player)
@@ -862,8 +1202,8 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         Entity srcEnt = src.getEntity();
         if (srcEnt != null && (srcEnt == this || hasPassenger(srcEnt))) return true;
 
-        if (src == DamageSource.DRAGON_BREATH // inherited from it anyway
-                || src == DamageSource.CACTUS) // assume cactus needles don't hurt thick scaled lizards
+        if (src.is(net.minecraft.world.damagesource.DamageTypes.DRAGON_BREATH) // inherited from it anyway
+                || src.is(net.minecraft.world.damagesource.DamageTypes.CACTUS)) // assume cactus needles don't hurt thick scaled lizards
             return true;
 
         return super.isInvulnerableTo(src);
@@ -893,7 +1233,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         double posXTmp = getX();
         double posYTmp = getY();
         double posZTmp = getZ();
-        boolean onGroundTmp = onGround;
+        boolean onGroundTmp = onGround();
 
         super.refreshDimensions();
 
@@ -902,7 +1242,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         setPos(posXTmp, posYTmp, posZTmp);
 
         // otherwise, setScale stops the dragon from landing while it is growing
-        onGround = onGroundTmp;
+        setOnGround(onGroundTmp);
     }
 
     @Override
@@ -931,8 +1271,8 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             var collider = getBoundingBox().deflate(getBbWidth() * 0.2f);
             return BlockPos.betweenClosedStream(collider).anyMatch((pos) ->
             {
-                BlockState state = level.getBlockState(pos);
-                return !state.isAir() && state.isSuffocating(level, pos) && Shapes.joinIsNotEmpty(state.getCollisionShape(level, pos).move(pos.getX(), pos.getY(), pos.getZ()), Shapes.create(collider), BooleanOp.AND);
+                BlockState state = level().getBlockState(pos);
+                return !state.isAir() && state.isSuffocating(level(), pos) && Shapes.joinIsNotEmpty(state.getCollisionShape(level(), pos).move(pos.getX(), pos.getY(), pos.getZ()), Shapes.create(collider), BooleanOp.AND);
             });
         }
     }
