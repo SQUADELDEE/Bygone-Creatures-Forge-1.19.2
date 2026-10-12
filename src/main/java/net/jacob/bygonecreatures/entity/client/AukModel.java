@@ -30,7 +30,7 @@ public class AukModel extends GeoModel<AukEntity> {
     public void setCustomAnimations(AukEntity entity, long instanceId, AnimationState<AukEntity> animationState) {
         super.setCustomAnimations(entity, instanceId, animationState);
         EntityModelData entityData = animationState.getData(DataTickets.ENTITY_MODEL_DATA);
-        if (entity.isInWater()) {
+        if (entity.isInWater() || entity.isLeaping()) {
             getBone("holder").ifPresent(rotBone -> {
                 rotBone.setRotX(entityData.headPitch() * ((float) Math.PI / 180.0F));
                 rotBone.setRotY(entityData.netHeadYaw() * ((float) Math.PI / 180.0F));

@@ -22,6 +22,8 @@ public class LuggageNetworkHandler {
         CHANNEL.registerMessage(id++, BearRoarShakePacket.class, BearRoarShakePacket::encode, BearRoarShakePacket::new, BearRoarShakePacket.Handler::onMessage);
         CHANNEL.registerMessage(id++, ArgenDivePacket.class, ArgenDivePacket::encode, ArgenDivePacket::new, ArgenDivePacket.Handler::onMessage);
         CHANNEL.registerMessage(id++, BearAbilityPacket.class, BearAbilityPacket::encode, BearAbilityPacket::new, BearAbilityPacket.Handler::onMessage);
+        CHANNEL.registerMessage(id++, TerrorBirdAbilityPacket.class, TerrorBirdAbilityPacket::encode, TerrorBirdAbilityPacket::new, TerrorBirdAbilityPacket.Handler::onMessage);
+        CHANNEL.registerMessage(id++, ArgenGrabPacket.class, ArgenGrabPacket::encode, ArgenGrabPacket::new, ArgenGrabPacket.Handler::onMessage);
 
     }
 }

@@ -69,7 +69,7 @@ public class ModEntityTypes {
     public static final RegistryObject<EntityType<ProtoceratopsEntity>> PROTOCERATOPS =
             ENTITY_TYPES.register("protoceratops",
                     () -> EntityType.Builder.of(ProtoceratopsEntity::new, MobCategory.CREATURE)
-                            .sized(1.0f, 1.0f)
+                            .sized(0.9f, 0.9f)
                             .build(new ResourceLocation(BygoneCreatures.MOD_ID, "protoceratops").toString()));
 
 

@@ -32,6 +32,7 @@ import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.ai.navigation.WaterBoundPathNavigation;
+import net.minecraft.world.entity.ai.util.DefaultRandomPos;
 import net.minecraft.world.entity.ai.util.LandRandomPos;
 import net.minecraft.world.entity.animal.AbstractFish;
 import net.minecraft.world.entity.animal.AbstractSchoolingFish;
@@ -61,6 +62,7 @@ import software.bernie.geckolib.core.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -74,6 +76,36 @@ public class AukEntity extends Animal implements GeoEntity {
     private int eatDelay;
     private int eatTime;
     private int floatTime;
+
+    // ---- Land <-> water transitions ----
+    // Penguin-style: rather than wading in and out, the auk launches itself across the shoreline in a low arc -
+    // belly-first into the water, and up and out of it onto land. Synced so the client plays the swim pose and
+    // pitches the body along the arc while it's airborne.
+    private static final EntityDataAccessor<Boolean> LEAPING = SynchedEntityData.defineId(AukEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final int LEAP_COOLDOWN = 60;
+    private static final int HABITAT_SWITCH_MIN = 400;   // ticks between deliberate trips across the shore: 20-45s
+    private static final int HABITAT_SWITCH_VARIATION = 500;
+    private static final double HABITAT_SEARCH_RADIUS = 18.0D;
+    private int leapTicks;
+    private int leapCooldown;
+    private int habitatTimer;
+
+    // Swimming. Water drag is gentler than before (the auk carries its momentum, so it glides between strokes),
+    // the move control turns it quickly and steers it straight at its waypoint, and a steady forward thrust keeps it
+    // moving between waypoints instead of stalling. Together: faster, more accurate, more continuous.
+    private static final double SWIM_GLIDE = 0.92D;           // was 0.9
+    private static final float SWIM_SPEED_FACTOR = 0.27F;     // was 0.21 (move control speed per unit of speed modifier)
+    private static final float SWIM_YAW_RATE = 90.0F;         // degrees/tick the body can turn toward the waypoint; was 40
+    private static final float SWIM_PITCH_RATE = 70.0F;       // was 45
+    private static final double SWIM_CRUISE_THRUST = 0.012D;  // was 0.005
+
+    // Group flee: hurt on land, an auk and every other auk nearby bolt for the nearest water; ones already in the
+    // water swim off away from the threat.
+    private static final int FLEE_TICKS = 200;
+    private static final double FLEE_ALERT_RADIUS = 20.0D;
+    private int fleeTicks;
+    @Nullable
+    private LivingEntity fleeThreat;
 
     @Override
     public int getMaxHeadYRot() {
@@ -91,6 +123,7 @@ public class AukEntity extends Animal implements GeoEntity {
         this.lookControl = new aukLookControl(this);
         this.setPathfindingMalus(BlockPathTypes.WATER, 0.0F);
         this.setCanPickUpLoot(true);
+        this.habitatTimer = HABITAT_SWITCH_MIN + this.random.nextInt(HABITAT_SWITCH_VARIATION);
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -107,6 +140,7 @@ public class AukEntity extends Animal implements GeoEntity {
         super.defineSynchedData();
         this.entityData.define(FLOATING, false);
         this.entityData.define(EATING, false);
+        this.entityData.define(LEAPING, false);
     }
 
     @Override
@@ -116,6 +150,8 @@ public class AukEntity extends Animal implements GeoEntity {
         this.goalSelector.addGoal(2, new AukEntity.GoToSurfaceGoal(60));
         this.goalSelector.addGoal(3, new AukEntity.BreedGoal(this));
         this.goalSelector.addGoal(4, new AukEntity.SearchFoodGoal());
+        this.goalSelector.addGoal(1, new AukEntity.FleeToWaterGoal());
+        this.goalSelector.addGoal(5, new AukEntity.HabitatSwitchGoal());
         this.goalSelector.addGoal(5, new AukEntity.FollowParentGoal(this));
         this.goalSelector.addGoal(6, new AukEntity.RandomStrollGoal(this));
         this.goalSelector.addGoal(7, new AukEntity.LookAtPlayerGoal(this));
@@ -177,6 +213,10 @@ public class AukEntity extends Animal implements GeoEntity {
     public void aiStep() {
         super.aiStep();
         if (this.isAlive() && this.isEffectiveAi()) {
+            if (this.habitatTimer > 0) --this.habitatTimer;
+            this.tickLeap();
+            this.tickBoundaryLeap();
+
             if (this.isFloating()) {
                 this.setDeltaMovement(this.getDeltaMovement().multiply(1.0D, 0.0D, 1.0D));
                 this.setYya(0.0F);
@@ -377,7 +417,7 @@ public class AukEntity extends Animal implements GeoEntity {
         if (this.isEffectiveAi() && this.isInWater()) {
             this.moveRelative(this.getSpeed(), speed);
             this.move(MoverType.SELF, this.getDeltaMovement());
-            this.setDeltaMovement(this.getDeltaMovement().scale(0.9D));
+            this.setDeltaMovement(this.getDeltaMovement().scale(SWIM_GLIDE));
             this.calculateEntityAnimation(false);
         } else {
             super.travel(speed);
@@ -467,6 +507,10 @@ public class AukEntity extends Animal implements GeoEntity {
     }
 
     private PlayState predicate(AnimationState<AukEntity> state) {
+        if (this.isLeaping()) { // torpedo pose through the arc, in the air as well as in the water
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("swim"));
+            return PlayState.CONTINUE;
+        }
         if (this.isInWater()) {
             if (this.isFloating()) {
                 state.getController().setAnimation(RawAnimation.begin().thenLoop("swim2"));
@@ -551,6 +595,345 @@ public class AukEntity extends Animal implements GeoEntity {
         this.setFloating(true);
     }
 
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        boolean hurt = super.hurt(source, amount);
+        if (hurt && !this.level().isClientSide && this.isAlive() && source.getEntity() instanceof LivingEntity threat && !(threat instanceof AukEntity)) {
+            this.startFlee(threat);
+            for (AukEntity other : this.level().getEntitiesOfClass(AukEntity.class, this.getBoundingBox().inflate(FLEE_ALERT_RADIUS), o -> o != this && o.isAlive())) {
+                other.startFlee(threat); // the whole colony runs
+            }
+        }
+        return hurt;
+    }
+
+    public void startFlee(LivingEntity threat) {
+        this.fleeThreat = threat;
+        this.fleeTicks = FLEE_TICKS;
+        this.setEating(false);
+    }
+
+    // A spot in the water 10-14 blocks off, away from the threat: where a swimmer already in the water heads.
+    @Nullable
+    private Vec3 findWaterAwayFrom(Entity threat) {
+        Vec3 away = this.position().subtract(threat.position()).multiply(1.0D, 0.0D, 1.0D);
+        double baseAngle = away.lengthSqr() < 1.0E-4D ? this.random.nextDouble() * Math.PI * 2.0D : Math.atan2(away.z, away.x);
+        for (int i = 0; i < 8; i++) {
+            double angle = baseAngle + (this.random.nextDouble() - 0.5D) * Math.toRadians(100.0D);
+            double dist = 10.0D + this.random.nextDouble() * 4.0D;
+            BlockPos pos = BlockPos.containing(this.getX() + Math.cos(angle) * dist, this.getY() + this.random.nextInt(3) - 1, this.getZ() + Math.sin(angle) * dist);
+            if (this.level().getFluidState(pos).is(FluidTags.WATER) && this.level().getFluidState(pos.above()).is(FluidTags.WATER)) {
+                return Vec3.atCenterOf(pos);
+            }
+        }
+        return null;
+    }
+
+    public class FleeToWaterGoal extends Goal {
+        private Vec3 destination;
+
+        public FleeToWaterGoal() {
+            this.setFlags(EnumSet.of(Flag.MOVE));
+        }
+
+        @Override
+        public boolean canUse() {
+            return AukEntity.this.fleeTicks > 0 && AukEntity.this.isAlive() && !AukEntity.this.isLeaping();
+        }
+
+        @Override
+        public boolean canContinueToUse() {
+            return AukEntity.this.fleeTicks > 0 && AukEntity.this.isAlive();
+        }
+
+        @Override
+        public void start() {
+            this.destination = null;
+        }
+
+        @Override
+        public void stop() {
+            AukEntity.this.getNavigation().stop();
+        }
+
+        @Override
+        public void tick() {
+            AukEntity auk = AukEntity.this;
+            --auk.fleeTicks;
+            if (auk.isLeaping()) return;
+
+            if (this.destination == null || auk.getNavigation().isDone()) {
+                if (!auk.isInWater()) {
+                    // on land: the nearest water (the path to it crosses the shore, where the auk leaps in)
+                    this.destination = auk.findOtherHabitat();
+                    if (this.destination == null && auk.fleeThreat != null) {
+                        this.destination = DefaultRandomPos.getPosAway(auk, 16, 7, auk.fleeThreat.position()); // no water near: just run
+                    }
+                } else if (auk.fleeThreat != null) {
+                    this.destination = auk.findWaterAwayFrom(auk.fleeThreat);
+                }
+                if (this.destination != null) auk.getNavigation().moveTo(this.destination.x, this.destination.y, this.destination.z, 1.7D);
+            }
+        }
+    }
+
+    public boolean isLeaping() {
+        return this.entityData.get(LEAPING);
+    }
+
+    // The arc ends in water or on land, so the landing shouldn't hurt.
+    @Override
+    public boolean causeFallDamage(float distance, float multiplier, DamageSource source) {
+        return !this.isLeaping() && super.causeFallDamage(distance, multiplier, source);
+    }
+
+    // ------------------------------------------------------------------ shoreline leaps
+
+    // In-flight bookkeeping: tilt the body along the arc (nose up on the way out, nose down on the way in - so a
+    // dive enters head first), and end the leap once it's landed.
+    private void tickLeap() {
+        if (this.leapCooldown > 0) --this.leapCooldown;
+        if (!this.isLeaping()) return;
+
+        ++this.leapTicks;
+        Vec3 d = this.getDeltaMovement();
+        double horizontal = Math.sqrt(d.x * d.x + d.z * d.z);
+        float pitch = (float) (-Mth.atan2(d.y, Math.max(horizontal, 0.05D)) * (180D / Math.PI));
+        // written after super.aiStep(), so it wins over the look control easing pitch back to level
+        this.setXRot(Mth.lerp(0.35F, this.getXRot(), Mth.clamp(pitch, -60.0F, 60.0F)));
+
+        if ((this.leapTicks > 4 && (this.isInWater() || this.onGround())) || this.leapTicks > 80) {
+            boolean intoWater = this.isInWater();
+            this.setLeaping(false);
+            this.leapTicks = 0;
+            if (!intoWater && this.level() instanceof ServerLevel server) {
+                server.sendParticles(ParticleTypes.POOF, this.getX(), this.getY() + 0.1D, this.getZ(), 6, 0.3D, 0.05D, 0.3D, 0.02D);
+            }
+        }
+    }
+
+    private void setLeaping(boolean leaping) {
+        this.entityData.set(LEAPING, leaping);
+    }
+
+    // Looks at the next step of the path being followed: if it crosses the waterline, leap across instead of
+    // wading. This catches every crossing - a deliberate trip (HabitatSwitchGoal), following a parent, chasing a
+    // fish, fetching food - not just the planned ones.
+    private void tickBoundaryLeap() {
+        if (this.isLeaping() || this.leapCooldown > 0 || this.isEating() || this.isFloating() || this.isPassenger()) return;
+        Path path = this.getNavigation().getPath();
+        if (path == null || path.isDone()) return;
+
+        BlockPos next = path.getNextNodePos();
+        double dx = next.getX() + 0.5D - this.getX();
+        double dz = next.getZ() + 0.5D - this.getZ();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        if (distance < 0.05D) return;
+        Vec3 direction = new Vec3(dx / distance, 0.0D, dz / distance);
+
+        if (!this.isInWater() && this.onGround()) {
+            // on land, about to step into water
+            if (distance <= 2.5D && this.level().getFluidState(next).is(FluidTags.WATER)) this.tryDiveLeap(direction);
+        } else if (this.isInWater() && distance <= 3.0D && !this.level().getFluidState(next).is(FluidTags.WATER)) {
+            // in water, about to climb out
+            this.tryEmergeLeap(direction);
+        }
+    }
+
+    // First water-surface point 2.5-5.5 blocks out along `direction`, at least two deep so there's room to dive.
+    @Nullable
+    private Vec3 findDiveTarget(Vec3 direction) {
+        for (double dist = 2.5D; dist <= 5.5D; dist += 0.5D) {
+            double x = this.getX() + direction.x * dist;
+            double z = this.getZ() + direction.z * dist;
+            for (int dy = 1; dy >= -3; dy--) {
+                BlockPos pos = BlockPos.containing(x, this.getY() + dy, z);
+                if (this.level().getFluidState(pos).is(FluidTags.WATER)) {
+                    if (this.level().getFluidState(pos.below()).is(FluidTags.WATER) && this.level().getBlockState(pos.above()).isAir()) {
+                        return new Vec3(x, pos.getY() + 0.6D, z);
+                    }
+                    break;
+                }
+            }
+        }
+        return null;
+    }
+
+    // First stand-able land 1.5-4 blocks ahead, no more than ~1.5 above the water, with room to land.
+    @Nullable
+    private Vec3 findEmergeTarget(Vec3 direction, int surfaceY) {
+        for (double dist = 1.5D; dist <= 4.0D; dist += 0.5D) {
+            double x = this.getX() + direction.x * dist;
+            double z = this.getZ() + direction.z * dist;
+            for (int dy = 2; dy >= -2; dy--) {
+                BlockPos floor = BlockPos.containing(x, this.getY() + dy, z);
+                if (!this.level().getBlockState(floor).blocksMotion() || !this.level().getFluidState(floor).isEmpty()) continue;
+                if (!this.level().getBlockState(floor.above()).isAir() || !this.level().getBlockState(floor.above(2)).isAir()) break;
+                if (floor.getY() + 1 - surfaceY <= 1.5D) return new Vec3(x, floor.getY() + 1.0D, z);
+                break;
+            }
+        }
+        return null;
+    }
+
+    private int waterSurfaceYAbove() {
+        BlockPos.MutableBlockPos pos = this.blockPosition().mutable();
+        for (int i = 0; i < 12 && this.level().getFluidState(pos).is(FluidTags.WATER); i++) pos.move(0, 1, 0);
+        return pos.getY();
+    }
+
+    private void tryDiveLeap(Vec3 direction) {
+        Vec3 target = this.findDiveTarget(direction);
+        if (target != null) this.launchAcross(target, 0.0D, 0.3D, 0.55D);
+    }
+
+    private void tryEmergeLeap(Vec3 direction) {
+        int surfaceY = this.waterSurfaceYAbove();
+        if (this.getY() < surfaceY - 1.3D) return; // still too deep: keep swimming up first
+        Vec3 target = this.findEmergeTarget(direction, surfaceY);
+        if (target != null) this.launchAcross(target, 0.5D, 0.45D, 0.75D);
+    }
+
+    // Launches along a ballistic arc that comes down on `target`: picks the weakest vertical launch in
+    // [minLift, maxLift] whose arc rises at least `clearance` above the launch height and then falls back to the
+    // target's height, and sets the forward speed to cover the horizontal distance in that flight time (horizontal
+    // speed in the air decays ~9% per tick).
+    private void launchAcross(Vec3 target, double clearance, double minLift, double maxLift) {
+        double dy = target.y - this.getY();
+        double dxTotal = target.x - this.getX();
+        double dzTotal = target.z - this.getZ();
+        double distance = Math.sqrt(dxTotal * dxTotal + dzTotal * dzTotal);
+        if (distance < 0.3D) return;
+
+        double lift = -1.0D;
+        int ticks = -1;
+        for (double v = minLift; v <= maxLift + 1.0E-6D; v += 0.05D) {
+            double y = 0.0D, vy = v, apex = 0.0D;
+            int t = 0;
+            while (t < 60) {
+                y += vy;
+                vy = (vy - 0.08D) * 0.98D;
+                ++t;
+                apex = Math.max(apex, y);
+                if (vy < 0.0D && y <= dy) break;
+            }
+            if (t < 60 && apex >= Math.max(dy, 0.0D) + clearance) {
+                lift = v;
+                ticks = t;
+                break;
+            }
+        }
+        if (lift < 0.0D) return;
+
+        double forward = Mth.clamp(distance * 0.09D / (1.0D - Math.pow(0.91D, ticks)), 0.12D, 0.7D);
+        this.getNavigation().stop();
+        this.getMoveControl().setWantedPosition(this.getX(), this.getY(), this.getZ(), 0.0D);
+        this.setDeltaMovement(dxTotal / distance * forward, lift, dzTotal / distance * forward);
+        this.hasImpulse = true;
+        this.setLeaping(true);
+        this.leapTicks = 0;
+        this.leapCooldown = LEAP_COOLDOWN;
+
+        if (this.level() instanceof ServerLevel server) {
+            if (this.isInWater()) {
+                server.sendParticles(ParticleTypes.SPLASH, this.getX(), this.getY() + 0.4D, this.getZ(), 20, 0.4D, 0.1D, 0.4D, 0.3D);
+            }
+        }
+        this.playSound(this.isInWater() ? SoundEvents.PLAYER_SPLASH : SoundEvents.RABBIT_JUMP, 0.8F, 1.0F + this.random.nextFloat() * 0.2F);
+    }
+
+    // ------------------------------------------------------------------ habitat cycle
+
+    // Every so often, deliberately head for the other habitat - from land to the nearest deep water, or from the
+    // water to the nearest shore - rather than staying in whichever one it happened to wander into. The path takes
+    // it to the waterline and tickBoundaryLeap does the actual leap across.
+    @Nullable
+    private Vec3 findOtherHabitat() {
+        Vec3 best = null;
+        double bestDistance = Double.MAX_VALUE;
+        boolean inWater = this.isInWater();
+        for (int i = 0; i < 40; i++) {
+            double x = this.getX() + (this.random.nextDouble() * 2.0D - 1.0D) * HABITAT_SEARCH_RADIUS;
+            double z = this.getZ() + (this.random.nextDouble() * 2.0D - 1.0D) * HABITAT_SEARCH_RADIUS;
+            Vec3 found = null;
+            for (int dy = 4; dy >= -8; dy--) {
+                BlockPos pos = BlockPos.containing(x, this.getY() + dy, z);
+                if (!this.level().hasChunkAt(pos)) break;
+                if (inWater) { // want standable land
+                    if (this.level().getBlockState(pos).blocksMotion() && this.level().getFluidState(pos).isEmpty()
+                            && this.level().getBlockState(pos.above()).isAir() && this.level().getBlockState(pos.above(2)).isAir()) {
+                        found = Vec3.atBottomCenterOf(pos.above());
+                        break;
+                    }
+                } else { // want water at least two deep, with air above
+                    if (this.level().getFluidState(pos).is(FluidTags.WATER)) {
+                        if (this.level().getFluidState(pos.below()).is(FluidTags.WATER) && this.level().getBlockState(pos.above()).isAir()) {
+                            found = new Vec3(pos.getX() + 0.5D, pos.getY() + 0.3D, pos.getZ() + 0.5D);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (found != null) {
+                double distance = found.distanceToSqr(this.position());
+                if (distance < bestDistance) {
+                    best = found;
+                    bestDistance = distance;
+                }
+            }
+        }
+        return best;
+    }
+
+    public class HabitatSwitchGoal extends Goal {
+        private Path path;
+        private int ticks;
+
+        public HabitatSwitchGoal() {
+            this.setFlags(EnumSet.of(Flag.MOVE));
+        }
+
+        @Override
+        public boolean canUse() {
+            AukEntity auk = AukEntity.this;
+            if (auk.habitatTimer > 0 || auk.isBaby() || auk.isEating() || auk.isFloating() || auk.needsSurface()
+                    || auk.isLeaping() || auk.getTarget() != null || !auk.getMainHandItem().isEmpty()) {
+                return false;
+            }
+            Vec3 destination = auk.findOtherHabitat();
+            this.path = destination == null ? null : auk.getNavigation().createPath(destination.x, destination.y, destination.z, 1);
+            if (this.path == null) {
+                auk.habitatTimer = 200; // nothing reachable on the other side right now: look again soon
+                return false;
+            }
+            return true;
+        }
+
+        @Override
+        public boolean canContinueToUse() {
+            AukEntity auk = AukEntity.this;
+            return this.ticks < 500 && (!auk.getNavigation().isDone() || auk.isLeaping())
+                    && !auk.isEating() && auk.getTarget() == null && !auk.needsSurface();
+        }
+
+        @Override
+        public void start() {
+            this.ticks = 0;
+            AukEntity.this.getNavigation().moveTo(this.path, 1.1D);
+        }
+
+        @Override
+        public void tick() {
+            ++this.ticks;
+        }
+
+        @Override
+        public void stop() {
+            AukEntity.this.habitatTimer = HABITAT_SWITCH_MIN + AukEntity.this.random.nextInt(HABITAT_SWITCH_VARIATION);
+            if (!AukEntity.this.isLeaping()) AukEntity.this.getNavigation().stop();
+        }
+    }
+
     public Vec3 calculateMouthPos() {
         Vec3 viewVector = this.getViewVector(0.0F).scale(this.isFloating() ? 1.2D : 0.8D).add(0.0D, this.isFloating() ? 0.8D : 1.5D, 0.0D).scale(this.getScale());
         return new Vec3(this.getX() + viewVector.x(), this.getY() + viewVector.y(), this.getZ() + viewVector.z());
@@ -596,7 +979,7 @@ public class AukEntity extends Animal implements GeoEntity {
         public void tick() {
             if (this.auk.isInWater()) {
                 if (!this.auk.needsSurface()) {
-                    this.auk.setDeltaMovement(this.auk.getDeltaMovement().add(this.auk.getLookAngle().scale(this.auk.isFloating() ? 0.002F : 0.005F)));
+                    this.auk.setDeltaMovement(this.auk.getDeltaMovement().add(this.auk.getLookAngle().scale(this.auk.isFloating() ? 0.002F : SWIM_CRUISE_THRUST)));
                 }
 
                 if (!this.auk.isFloating()) {
@@ -610,17 +993,17 @@ public class AukEntity extends Animal implements GeoEntity {
                             this.mob.setZza(0.0F);
                         } else {
                             float yRot = (float) (Mth.atan2(d2, d0) * (double) (180F / (float) Math.PI)) - 90.0F;
-                            this.mob.setYRot(this.rotlerp(this.mob.getYRot(), yRot, 40.0F));
+                            this.mob.setYRot(this.rotlerp(this.mob.getYRot(), yRot, SWIM_YAW_RATE));
                             this.mob.yBodyRot = this.mob.getYRot();
                             this.mob.yHeadRot = this.mob.getYRot();
-                            float speed = (float) (this.speedModifier * 0.21F);
+                            float speed = (float) (this.speedModifier * SWIM_SPEED_FACTOR);
                             this.mob.setSpeed(speed * 0.2F);
 
                             double horizontalDistance = Math.sqrt(d0 * d0 + d2 * d2);
                             if (Math.abs(d1) > (double) 1.0E-5F || Math.abs(horizontalDistance) > (double) 1.0E-5F) {
                                 float xRot = -((float) (Mth.atan2(d1, horizontalDistance) * (double) (180F / (float) Math.PI)));
                                 xRot = Mth.clamp(Mth.wrapDegrees(xRot), -180.0F, 180.0F);
-                                this.mob.setXRot(this.rotlerp(this.mob.getXRot(), xRot, 45.0F));
+                                this.mob.setXRot(this.rotlerp(this.mob.getXRot(), xRot, SWIM_PITCH_RATE));
                             }
 
                             BlockPos wantedPos = BlockPos.containing(this.wantedX, this.wantedY, this.wantedZ);
@@ -756,8 +1139,38 @@ public class AukEntity extends Animal implements GeoEntity {
             this.auk = AukEntity;
         }
 
+        // Idle strolls stay in whichever habitat it's in - on land it picks land spots, in the water it picks
+        // water - so crossing the shore only ever happens on purpose (HabitatSwitchGoal) or for a reason.
+        @Nullable
+        @Override
+        protected Vec3 getPosition() {
+            double reach = this.auk.isInWater() ? 14.0D : 10.0D; // longer legs in the water
+            for (int i = 0; i < 10; i++) {
+                double x = this.auk.getX() + (this.auk.getRandom().nextDouble() * 2.0D - 1.0D) * reach;
+                double z = this.auk.getZ() + (this.auk.getRandom().nextDouble() * 2.0D - 1.0D) * reach;
+                if (this.auk.isInWater()) {
+                    BlockPos pos = BlockPos.containing(x, this.auk.getY() + this.auk.getRandom().nextInt(5) - 2, z);
+                    if (this.auk.level().getFluidState(pos).is(FluidTags.WATER) && this.auk.level().getFluidState(pos.above()).is(FluidTags.WATER)) {
+                        return Vec3.atCenterOf(pos);
+                    }
+                } else {
+                    for (int dy = 2; dy >= -3; dy--) {
+                        BlockPos feet = BlockPos.containing(x, this.auk.getY() + dy, z);
+                        if (this.auk.level().getBlockState(feet.below()).blocksMotion() && this.auk.level().getBlockState(feet).isAir()
+                                && this.auk.level().getFluidState(feet).isEmpty() && this.auk.level().getBlockState(feet.above()).isAir()) {
+                            return Vec3.atBottomCenterOf(feet);
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
         @Override
         public boolean canUse() {
+            // In the water, skip the idle pause between strolls: the next waypoint is picked the moment the last
+            // is reached, so it keeps swimming rather than stopping and starting.
+            if (this.auk.isInWater() && !(this.auk.isFloating() || this.auk.needsSurface() || this.auk.isEating())) this.trigger();
             return super.canUse() && !(this.auk.isFloating() || this.auk.needsSurface() || this.auk.isEating());
         }
 

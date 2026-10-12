@@ -7,6 +7,9 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.jacob.bygonecreatures.entity.ai.TameableAIRide;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -75,6 +78,12 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
     private static final EntityDataAccessor<Boolean> FOLLOWING_OWNER =
             SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.BOOLEAN);
 
+    // Whether the run clip should be playing: true while it has a live target (a chase) or is following its
+    // owner - anything other than idly wandering. Set server-side and synced, because the client never learns
+    // about targets and the follow goal only exists on the server.
+    private static final EntityDataAccessor<Boolean> RUNNING =
+            SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.BOOLEAN);
+
 
 
 
@@ -88,8 +97,102 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
     @Nullable
     private BlockPos nestPos;
 
+    // Unstick assist while pursuing something (see tickPursuitJump).
+    private static final int STUCK_TICKS_TO_BOOST = 6;
+    private static final float BOOSTED_JUMP_MULTIPLIER = 1.45F; // ~1.8 blocks of height instead of ~1.25: enough to climb out of a 2-deep hole
+    // The rider's space-bar leap. Vertical: 1.5x a normal jump (~2.7 blocks of height). Horizontal: launch speed
+    // scales with how fast the bird is already moving, so a standing leap is a short bound and a flat-out run
+    // clears a wide chasm or river (horizontal air speed decays ~9%/tick, so range is roughly 10x launch speed:
+    // ~2.5 blocks standing, ~6 at a run, ~8.5 at the cap).
+    private static final float MOUNTED_LEAP_MULTIPLIER = 1.5F;
+    private static final double LEAP_BASE_SPEED = 0.25D;
+    private static final double LEAP_SPEED_GAIN = 2.4D;
+    private static final double LEAP_MAX_SPEED = 0.85D;
+    private static final int LEAP_COOLDOWN = 20;
+    private int stuckTicks;
+    private int jumpCooldown;
+    private float jumpMultiplier = 1.0F;
+
+    // ---- Mounted abilities ----
+    // Space: a leap. Reckless peck (toggle): hammers the ground in front over and over, hitting everything in
+    // reach each time the beak lands - on top of the normal-attack pecks it already has.
+    private static final EntityDataAccessor<Boolean> RECKLESS = SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.BOOLEAN);
+    // Off cooldown. Only re-set when it changes, so it costs a packet per transition rather than per tick.
+    private static final EntityDataAccessor<Boolean> RECKLESS_READY = SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.BOOLEAN);
+    // Dash (V): a short burst of speed in the direction it's already moving (or facing, if standing still). The
+    // direction is fixed at the start; DASH_TICK counts down the burst, synced so every client (and the rider's own
+    // predicted movement) applies it for the same stretch. Cooldown is server-side with a synced "ready" flag for the HUD.
+    private static final EntityDataAccessor<Integer> DASH_TICK = SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Boolean> DASH_READY = SynchedEntityData.defineId(TerrorBirdEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final int DASH_TICKS = 8;
+    private static final int DASH_COOLDOWN = 40;
+    private static final double DASH_SPEED = 0.85D;  // blocks/tick, held for the whole burst: ~7 blocks
+    private int dashCooldown;
+    @Nullable
+    private Vec3 dashDirection;
+    private static final int RECKLESS_MAX_TICKS = 200;
+    private static final int RECKLESS_COOLDOWN = 160;
+    private static final float RECKLESS_DAMAGE = 5.0F;
+    private static final double RECKLESS_SPEED_FACTOR = 0.8D;   // it's busy hammering: a little slower
+    private static final double PECK_REACH = 2.6D;              // how far ahead the beak lands (blocks)
+    private static final double PECK_RADIUS = 1.6D;
+    private static final int PECK_HIT_TICK_A = 15;              // attack-tick values at which the peck clip's two beats land
+    private static final int PECK_HIT_TICK_B = 5;
+    private static final double RIDER_OFFSET_ADJUST = -0.25D;   // sits the rider lower on the back
+    private int recklessTicks;
+    private int recklessCooldown;
+    private int hopCooldown;
+    // A leap can end well below where it started (across a ravine, off a ledge), so the landing mustn't hurt the
+    // bird or its rider. Set when a leap starts and consumed by the next landing; it also runs out on its own, in
+    // case the leap ends in water (no landing) and would otherwise leave a free fall later.
+    private static final int LEAP_FALL_IMMUNITY_TICKS = 120;
+    private int leapFallImmunity;
+    private int lastPeckTickClient;
+
     public TerrorBirdEntity(EntityType<? extends TamableAnimal> entityType, Level level) {
         super(entityType, level);
+        // Vanilla's default step height is 0.6, so anything a full block tall - a ledge, the lip of a hole - has to
+        // be jumped, and for a body this wide pathing often fails to line the jump up and it just stalls against the
+        // corner. With a full block of step height it simply walks up one-block edges.
+        this.setMaxUpStep(1.0F);
+    }
+
+    @Override
+    protected float getJumpPower() {
+        return super.getJumpPower() * jumpMultiplier;
+    }
+
+    // While chasing a target or following its owner, a bird that's pushing against something (or simply isn't
+    // getting anywhere although it has somewhere to go) jumps, with a bigger jump if it stays stuck - so it can
+    // get over obstacles and out of holes instead of standing there. Skipped while ridden: the rider steers.
+    private void tickPursuitJump() {
+        if (jumpCooldown > 0) jumpCooldown--;
+        if (!isRunning() || hasControllingPassenger() || isInWater()) {
+            stuckTicks = 0;
+            return;
+        }
+
+        double dx = getX() - xo, dz = getZ() - zo;
+        boolean notProgressing = !getNavigation().isDone() && dx * dx + dz * dz < 0.0004D;
+        stuckTicks = notProgressing ? stuckTicks + 1 : Math.max(0, stuckTicks - 2);
+
+        if (!onGround() || jumpCooldown > 0 || !(horizontalCollision || stuckTicks >= STUCK_TICKS_TO_BOOST)) return;
+
+        jumpMultiplier = stuckTicks >= STUCK_TICKS_TO_BOOST ? BOOSTED_JUMP_MULTIPLIER : 1.0F;
+        jumpFromGround();
+        jumpMultiplier = 1.0F;
+        jumpCooldown = 10;
+        stuckTicks = 0;
+
+        // a bit of forward drive toward where it's headed, so the jump actually carries it over the edge
+        Entity goal = getTarget() != null ? getTarget() : getOwner();
+        if (goal != null) {
+            Vec3 toward = new Vec3(goal.getX() - getX(), 0.0D, goal.getZ() - getZ());
+            if (toward.lengthSqr() > 1.0E-4D) {
+                Vec3 push = toward.normalize().scale(0.2D);
+                setDeltaMovement(getDeltaMovement().add(push.x, 0.0D, push.z));
+            }
+        }
     }
 
     public void setNestPos(@Nullable BlockPos pos) {
@@ -209,9 +312,27 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
     @Override
     public void tick() {
         super.tick();
+        if (hopCooldown > 0) hopCooldown--;
+        if (leapFallImmunity > 0) leapFallImmunity--;
+        if (this.level().isClientSide) {
+            tickPeckImpactParticles();
+            tickDashClient();
+        }
 
         if (!this.level().isClientSide()) {
             if (this.getAttackTick() > 0) this.getEntityData().set(ATTACK_TICK, this.getAttackTick() - 1);
+
+            LivingEntity chased = getTarget();
+            boolean running = (chased != null && chased.isAlive()) || this.entityData.get(FOLLOWING_OWNER);
+            if (running != isRunning()) this.entityData.set(RUNNING, running);
+            tickPursuitJump();
+            tickReckless();
+            tickDash();
+            // ordinary attack pecks get the same thump on each of the clip's two beats (reckless strikes
+            // play it themselves, above)
+            if (!isRecklessPecking() && (getAttackTick() == PECK_HIT_TICK_A || getAttackTick() == PECK_HIT_TICK_B)) {
+                playPeckSound();
+            }
 
             // no eggs left to guard: stop being territorial and just become an ordinary wandering bird
             if (nestPos != null && !isTame() && tickCount % 200 == 0 && level().hasChunkAt(nestPos) && !nestHasEggs()) {
@@ -228,6 +349,227 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
 
     }
 
+    // High jump whose forward speed comes from the bird's current speed, in the direction it's travelling (or
+    // facing, if standing still). Runs on both sides like the rest of the ridden movement, so it predicts cleanly.
+    private void leap() {
+        jumpMultiplier = MOUNTED_LEAP_MULTIPLIER;
+        jumpFromGround();
+        jumpMultiplier = 1.0F;
+
+        Vec3 motion = getDeltaMovement();
+        double speed = Math.sqrt(motion.x * motion.x + motion.z * motion.z);
+        Vec3 direction;
+        if (speed > 0.02D) {
+            direction = new Vec3(motion.x / speed, 0.0D, motion.z / speed);
+        } else {
+            float yaw = getYRot() * ((float) Math.PI / 180F);
+            direction = new Vec3(-Mth.sin(yaw), 0.0D, Mth.cos(yaw));
+        }
+        double launch = Mth.clamp(speed * LEAP_SPEED_GAIN + LEAP_BASE_SPEED, LEAP_BASE_SPEED, LEAP_MAX_SPEED);
+        setDeltaMovement(direction.x * launch, motion.y, direction.z * launch);
+        hopCooldown = LEAP_COOLDOWN;
+        leapFallImmunity = LEAP_FALL_IMMUNITY_TICKS;
+
+        playSound(SoundEvents.HORSE_JUMP, 0.8F, 0.8F);
+        if (level() instanceof ServerLevel server) {
+            BlockState ground = level().getBlockState(blockPosition().below());
+            if (!ground.isAir()) {
+                server.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, ground), getX(), getY() + 0.1D, getZ(), 10, 0.5D, 0.1D, 0.5D, 0.1D);
+            }
+        }
+    }
+
+    // Returning false without calling super also skips the passenger propagation (Entity.causeFallDamage forwards
+    // the fall to riders), so the rider is spared too.
+    @Override
+    public boolean causeFallDamage(float distance, float multiplier, DamageSource source) {
+        if (leapFallImmunity > 0) {
+            leapFallImmunity = 0;
+            return false;
+        }
+        return super.causeFallDamage(distance, multiplier, source);
+    }
+
+    public boolean isDashing() {
+        return this.entityData.get(DASH_TICK) > 0;
+    }
+
+    public boolean isDashReady() {
+        return this.entityData.get(DASH_READY);
+    }
+
+    // Server side, from TerrorBirdAbilityPacket.
+    public void dash() {
+        if (dashCooldown > 0 || isDashing() || !riderIsOwner() || isSitting()) return;
+        Vec3 motion = getDeltaMovement();
+        double speed = Math.sqrt(motion.x * motion.x + motion.z * motion.z);
+        if (speed > 0.02D) {
+            dashDirection = new Vec3(motion.x / speed, 0.0D, motion.z / speed);
+        } else {
+            float yaw = getYRot() * ((float) Math.PI / 180F);
+            dashDirection = new Vec3(-Mth.sin(yaw), 0.0D, Mth.cos(yaw));
+        }
+        this.entityData.set(DASH_TICK, DASH_TICKS);
+        dashCooldown = DASH_COOLDOWN;
+        playSound(SoundEvents.PHANTOM_SWOOP, 0.8F, 1.4F);
+    }
+
+    private void tickDash() {
+        if (dashCooldown > 0) dashCooldown--;
+        boolean ready = dashCooldown <= 0;
+        if (ready != isDashReady()) this.entityData.set(DASH_READY, ready);
+
+        int ticks = this.entityData.get(DASH_TICK);
+        if (ticks > 0) {
+            if (!riderIsOwner()) ticks = 1; // dismounted mid-dash: stop it
+            this.entityData.set(DASH_TICK, ticks - 1);
+            if (ticks - 1 <= 0) dashDirection = null;
+        }
+    }
+
+    // Client side: pick up the dash direction (the server fixed its own at the start; ours is read from the same
+    // motion a tick or two later), and kick up dust behind the bird for the length of it.
+    private void tickDashClient() {
+        if (!isDashing()) {
+            dashDirection = null;
+            return;
+        }
+        if (dashDirection == null) {
+            Vec3 motion = getDeltaMovement();
+            double speed = Math.sqrt(motion.x * motion.x + motion.z * motion.z);
+            if (speed > 0.02D) {
+                dashDirection = new Vec3(motion.x / speed, 0.0D, motion.z / speed);
+            } else {
+                float yaw = getYRot() * ((float) Math.PI / 180F);
+                dashDirection = new Vec3(-Mth.sin(yaw), 0.0D, Mth.cos(yaw));
+            }
+        }
+        BlockState ground = level().getBlockState(blockPosition().below());
+        if (ground.isAir()) return;
+        for (int i = 0; i < 5; i++) {
+            level().addParticle(new BlockParticleOption(ParticleTypes.BLOCK, ground),
+                    getX() + random.nextGaussian() * 0.5D - dashDirection.x * 0.8D, getY() + 0.1D, getZ() + random.nextGaussian() * 0.5D - dashDirection.z * 0.8D,
+                    -dashDirection.x * 0.15D, 0.08D, -dashDirection.z * 0.15D);
+        }
+    }
+
+    public boolean isRecklessPecking() {
+        return this.entityData.get(RECKLESS);
+    }
+
+    public boolean isRecklessReady() {
+        return this.entityData.get(RECKLESS_READY);
+    }
+
+    private boolean riderIsOwner() {
+        return getControllingPassenger() instanceof Player rider && isOwnedBy(rider);
+    }
+
+    // Server side, from TerrorBirdAbilityPacket: press once to start, again to stop.
+    public void toggleRecklessPeck() {
+        if (isRecklessPecking()) {
+            endReckless();
+        } else if (recklessCooldown <= 0 && riderIsOwner() && !isSitting()) {
+            this.entityData.set(RECKLESS, true);
+            recklessTicks = RECKLESS_MAX_TICKS;
+            startAttackAnim();
+            playSound(SoundEvents.PHANTOM_AMBIENT, 0.8F, 0.6F);
+        }
+    }
+
+    private void endReckless() {
+        this.entityData.set(RECKLESS, false);
+        recklessCooldown = RECKLESS_COOLDOWN;
+    }
+
+    private Vec3 peckPoint() {
+        float yaw = yBodyRot * ((float) Math.PI / 180F);
+        return position().add(-Mth.sin(yaw) * PECK_REACH, 0.0D, Mth.cos(yaw) * PECK_REACH);
+    }
+
+    private void tickReckless() {
+        if (recklessCooldown > 0) recklessCooldown--;
+        boolean ready = recklessCooldown <= 0;
+        if (ready != isRecklessReady()) this.entityData.set(RECKLESS_READY, ready);
+
+        if (!isRecklessPecking()) return;
+        if (!riderIsOwner() || --recklessTicks <= 0) {
+            endReckless();
+            return;
+        }
+        // keep the peck clip looping: restart it the moment a cycle runs out
+        if (getAttackTick() <= 1) startAttackAnim();
+
+        int phase = getAttackTick();
+        if (phase == PECK_HIT_TICK_A || phase == PECK_HIT_TICK_B) recklessStrike();
+    }
+
+    private boolean canPeckHit(LivingEntity target) {
+        if (target == this || !target.isAlive() || hasPassenger(target) || target == getOwner()) return false;
+        if (isAlliedTo(target)) return false;
+        return !(target instanceof TamableAnimal pet && pet.isTame() && java.util.Objects.equals(pet.getOwnerUUID(), getOwnerUUID()));
+    }
+
+    // The beak lands: hurt everything at the point it hits.
+    private void recklessStrike() {
+        Vec3 point = peckPoint();
+        AABB area = new AABB(point.x - PECK_RADIUS, getY() - 0.5D, point.z - PECK_RADIUS, point.x + PECK_RADIUS, getY() + 2.0D, point.z + PECK_RADIUS);
+        DamageSource source = getControllingPassenger() instanceof Player rider ? damageSources().playerAttack(rider) : damageSources().mobAttack(this);
+        for (LivingEntity target : level().getEntitiesOfClass(LivingEntity.class, area, this::canPeckHit)) {
+            if (!target.hurt(source, RECKLESS_DAMAGE)) continue;
+            Vec3 away = target.position().subtract(position()).multiply(1.0D, 0.0D, 1.0D);
+            if (away.lengthSqr() > 1.0E-4D) {
+                Vec3 push = away.normalize().scale(0.3D);
+                target.setDeltaMovement(target.getDeltaMovement().add(push.x, 0.12D, push.z));
+                target.hurtMarked = true;
+            }
+            // Damage alone only angers mobs that happen to have a retaliation goal; point the victim at the
+            // rider (or the bird) so untamed mobs that can fight back do.
+            if (target instanceof Mob mob && !(mob instanceof TamableAnimal pet && pet.isTame())) {
+                LivingEntity attacker = getControllingPassenger() instanceof Player rider ? rider : this;
+                if (!mob.canAttack(attacker)) attacker = this;
+                if (mob.canAttack(attacker)) {
+                    mob.setLastHurtByMob(attacker);
+                    mob.setTarget(attacker);
+                }
+            }
+        }
+        playPeckSound();
+    }
+
+    // The thump of the beak landing - the same for every peck.
+    private void playPeckSound() {
+        playSound(SoundEvents.PLAYER_ATTACK_KNOCKBACK, 0.7F, 0.9F);
+    }
+
+    // Client side: a puff of the ground the beak lands on, on each of the peck clip's two beats - for every kind
+    // of peck (an ordinary attack as well as the reckless mode), keyed off the synced attack timer. Tracks the
+    // previous value so it still fires if an update is skipped.
+    private void tickPeckImpactParticles() {
+        int tick = getAttackTick();
+        if (tick > 0 && ((lastPeckTickClient > PECK_HIT_TICK_A && tick <= PECK_HIT_TICK_A)
+                || (lastPeckTickClient > PECK_HIT_TICK_B && tick <= PECK_HIT_TICK_B))) {
+            Vec3 point = peckPoint();
+            for (int i = 0; i <= 3; i++) {
+                BlockPos floor = BlockPos.containing(point.x, getY() - i, point.z);
+                BlockState state = level().getBlockState(floor);
+                if (state.isAir() || !state.getFluidState().isEmpty()) continue;
+                for (int n = 0; n < 6; n++) {
+                    level().addParticle(new BlockParticleOption(ParticleTypes.BLOCK, state),
+                            point.x + random.nextGaussian() * 0.2D, floor.getY() + 1.05D, point.z + random.nextGaussian() * 0.2D,
+                            random.nextGaussian() * 0.04D, 0.08D + random.nextDouble() * 0.08D, random.nextGaussian() * 0.04D);
+                }
+                break;
+            }
+        }
+        lastPeckTickClient = tick;
+    }
+
+    @Override
+    public double getPassengersRidingOffset() {
+        return super.getPassengersRidingOffset() + RIDER_OFFSET_ADJUST;
+    }
+
     public int getAttackTick() {
         return this.getEntityData().get(ATTACK_TICK);
     }
@@ -241,12 +583,8 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
 
 
 
-    // Whether it needs to close distance in a hurry: chasing something it means to attack,
-    // or lagging behind an owner it's following. Drives both the run/walk animation choice
-    // below and (via the bumped MeleeAttackGoal/FollowOwnerGoal speed modifiers) actual
-    // movement speed, so the two stay in sync.
-    private boolean needsToHustle() {
-        return (getTarget() != null && getTarget().isAlive()) || this.entityData.get(FOLLOWING_OWNER);
+    public boolean isRunning() {
+        return this.entityData.get(RUNNING);
     }
 
     public class TerrorBirdFollowOwnerGoal extends FollowOwnerGoal {
@@ -267,17 +605,11 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
         }
     }
 
+    // Locomotion layer. Run whenever it's chasing a target, following its owner or being ridden; walk only when
+    // it's idly wandering with nothing to do. The peck is a separate
+    // layer (below) so it can play on top of whichever of these is going.
     public PlayState predicate(AnimationState<TerrorBirdEntity> state) {
-        // "roar" is actually the whole-neck peck-the-ground swing (never renamed) - takes
-        // priority over movement, same as before.
-        if (this.getAttackTick() > 0) {
-            state.getController().setAnimation(RawAnimation.begin().thenLoop("roar"));
-            return PlayState.CONTINUE;
-        }
-
-        boolean shouldRun = hasControllingPassenger() || needsToHustle();
-
-        if (state.isMoving() && shouldRun) {
+        if (state.isMoving() && (hasControllingPassenger() || isRunning())) {
             state.getController().setAnimation(RawAnimation.begin().thenLoop("run"));
             return PlayState.CONTINUE;
         }
@@ -294,6 +626,16 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
 
         state.getController().setAnimation(RawAnimation.begin().thenLoop("idle"));
         return PlayState.CONTINUE;
+    }
+
+    // Attack layer: the peck clip only animates the neck bones, so it layers over walk/run/idle instead of
+    // replacing them. Registered after the locomotion controller, so on the neck it wins while it's playing.
+    private PlayState peckPredicate(AnimationState<TerrorBirdEntity> state) {
+        if (this.getAttackTick() > 0) {
+            state.getController().setAnimation(RawAnimation.begin().thenLoop("peck"));
+            return PlayState.CONTINUE;
+        }
+        return PlayState.STOP;
     }
 
     //prevents tamable entities from attacking other tamed ones. ALWAYS INCLUDE FOR MODDED TAMAMBLES
@@ -330,8 +672,11 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        // 8-tick blend on locomotion so run <-> walk <-> idle ease into each other rather than snapping
         controllers.add(new AnimationController<>(this, "controller",
-                4, this::predicate));
+                8, this::predicate));
+        controllers.add(new AnimationController<>(this, "peckController",
+                2, this::peckPredicate));
 //        controllers.add(new AnimationController<>(this, "attackController",
 //                0, this::attackPredicate));
 
@@ -379,8 +724,16 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
             }
 
             if (isControlledByLocalInstance()) {
-                setSpeed((float) getAttributeValue(Attributes.MOVEMENT_SPEED));
+                setSpeed((float) (getAttributeValue(Attributes.MOVEMENT_SPEED) * (isRecklessPecking() ? RECKLESS_SPEED_FACTOR : 1.0D)));
                 setSprinting(inputMagnitude > 1.0E-4D);
+                if (driver.jumping && onGround() && hopCooldown <= 0) { // the rider's space bar: a leap
+                    leap();
+                }
+                if (isDashing() && dashDirection != null) { // dash: hold full speed along the fixed direction
+                    Vec3 motion = getDeltaMovement();
+                    setDeltaMovement(dashDirection.x * DASH_SPEED, motion.y, dashDirection.z * DASH_SPEED);
+                    setSprinting(true);
+                }
                 super.travel(new Vec3(moveSideways, vec3.y, moveForward));
             } else {
                 setDeltaMovement(Vec3.ZERO);
@@ -509,6 +862,11 @@ public class TerrorBirdEntity extends TamableAnimal implements GeoEntity {
         this.entityData.define(SITTING, false);
         this.getEntityData().define(ATTACK_TICK, 0);
         this.entityData.define(FOLLOWING_OWNER, false);
+        this.entityData.define(RUNNING, false);
+        this.entityData.define(RECKLESS, false);
+        this.entityData.define(RECKLESS_READY, true);
+        this.entityData.define(DASH_TICK, 0);
+        this.entityData.define(DASH_READY, true);
     }
 
     public void setSitting(boolean sitting) {

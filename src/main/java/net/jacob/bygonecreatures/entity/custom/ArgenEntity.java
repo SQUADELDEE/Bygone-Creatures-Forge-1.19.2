@@ -186,6 +186,17 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
     private static final float DIVE_PITCH_SMOOTHING = 0.25F;
     private static final int SHOCKWAVE_RING_POINTS = 32;
 
+    // ---- Grab: while flying, the owner can have it snatch up a nearby mob and carry it dangling below, then drop it ----
+    // The mob rides as a second passenger and is positioned under the bird by positionRider; it can't drive
+    // (getControllingPassenger only ever returns a player). canAddPassenger only admits the mob currently being grabbed.
+    private static final double GRAB_RANGE = 12.0D;       // horizontal, generous
+    private static final double GRAB_RANGE_BELOW = 24.0D;  // and a long way down - most things are on the ground
+    private static final double GRAB_RANGE_ABOVE = 6.0D;
+    private static final int GRAB_PULL_TICKS = 8;
+    @Nullable
+    private LivingEntity grabTarget;   // server: being pulled in, not yet aboard
+    private int grabTicks;
+
     private boolean diveKeyHeld;   // server
     private int diveCooldown;      // server
     private int diveTicks;         // server
@@ -410,6 +421,141 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
         entityData.set(DATA_FLYING, flying);
     }
 
+    // The carried mob, if any: any passenger that isn't a player. Identified by what it is, not by its position in
+    // the passenger list - the list order changes the moment the rider gets off, which used to promote the carried
+    // mob to first place (see getControllingPassenger).
+    @Nullable
+    public LivingEntity getHeldMob()
+    {
+        for (Entity passenger : getPassengers())
+        {
+            if (!(passenger instanceof Player) && passenger instanceof LivingEntity held) return held;
+        }
+        return null;
+    }
+
+    public boolean isHoldingMob()
+    {
+        return getHeldMob() != null;
+    }
+
+    @Override
+    protected boolean canAddPassenger(Entity passenger)
+    {
+        // the rider, or - once the rider is aboard - only the mob we're deliberately grabbing
+        return getPassengers().isEmpty() || (passenger == grabTarget && getPassengers().size() == 1);
+    }
+
+    private boolean canGrab(LivingEntity target)
+    {
+        if (target == this || target instanceof Player || target instanceof ArgenEntity || !target.isAlive() || target.isPassenger()) return false;
+        if (hasPassenger(target) || target == getOwner()) return false;
+        return target.getBbWidth() <= 2.2F && target.getBbHeight() <= 3.2F; // nothing too big to carry
+    }
+
+    @Nullable
+    private LivingEntity findGrabTarget()
+    {
+        AABB area = getBoundingBox().inflate(GRAB_RANGE, 0.0D, GRAB_RANGE).expandTowards(0.0D, -GRAB_RANGE_BELOW, 0.0D).expandTowards(0.0D, GRAB_RANGE_ABOVE, 0.0D);
+        LivingEntity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (LivingEntity candidate : level().getEntitiesOfClass(LivingEntity.class, area, this::canGrab))
+        {
+            double distance = distanceToSqr(candidate);
+            if (distance < bestDistance)
+            {
+                best = candidate;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    // Where a carried mob hangs: just ahead of and below the bird's body, its top roughly at the bird's belly.
+    private Vec3 clawPosition(Entity carried)
+    {
+        float yaw = yBodyRot * ((float) Math.PI / 180F);
+        return new Vec3(getX() - Mth.sin(yaw) * 0.9D, getY() + 1.0D - carried.getBbHeight(), getZ() + Mth.cos(yaw) * 0.9D);
+    }
+
+    @Override
+    protected void positionRider(Entity passenger, MoveFunction callback)
+    {
+        if (!(passenger instanceof Player))
+        {
+            Vec3 claws = clawPosition(passenger);
+            callback.accept(passenger, claws.x, claws.y, claws.z);
+            passenger.setYRot(getYRot());
+            if (passenger instanceof LivingEntity living) living.yBodyRot = getYRot();
+        }
+        else
+        {
+            super.positionRider(passenger, callback);
+        }
+    }
+
+    // Server side, from ArgenGrabPacket: grab the nearest mob in range, or let go of the one being carried.
+    public void toggleGrab()
+    {
+        if (!canBeControlledByRider()) return;
+        if (isHoldingMob())
+        {
+            releaseHeld();
+            return;
+        }
+        if (grabTarget != null || !isFlying() || onGround()) return; // only usable in flight
+        LivingEntity target = findGrabTarget();
+        if (target != null)
+        {
+            grabTarget = target;
+            grabTicks = 0;
+            playSound(SoundEvents.PHANTOM_SWOOP, 1.0F, 1.2F);
+        }
+    }
+
+    private void releaseHeld()
+    {
+        LivingEntity held = getHeldMob();
+        if (held == null) return;
+        held.stopRiding();
+        Vec3 forward = Vec3.directionFromRotation(0.0F, getYRot()).scale(0.15D);
+        held.setDeltaMovement(forward.x, -0.1D, forward.z);
+        held.hurtMarked = true;
+    }
+
+    // Reels the target in over a few ticks (so it visibly flies up to the claws rather than blinking there), then
+    // seats it as a passenger. Cancels if the bird stops flying, the rider leaves, or the target is lost.
+    private void tickGrab()
+    {
+        if (grabTarget != null)
+        {
+            if (!grabTarget.isAlive() || grabTarget.isRemoved() || !isFlying() || onGround() || !canBeControlledByRider())
+            {
+                grabTarget = null;
+                return;
+            }
+            Vec3 claws = clawPosition(grabTarget);
+            Vec3 at = grabTarget.position();
+            Vec3 next = at.add(claws.subtract(at).scale(0.45D));
+            grabTarget.teleportTo(next.x, next.y, next.z);
+            grabTarget.setDeltaMovement(Vec3.ZERO);
+            grabTarget.fallDistance = 0.0F;
+            if (level() instanceof ServerLevel server)
+            {
+                server.sendParticles(ParticleTypes.CLOUD, next.x, next.y + grabTarget.getBbHeight() * 0.5D, next.z, 3, 0.2D, 0.2D, 0.2D, 0.02D);
+            }
+            if (++grabTicks >= GRAB_PULL_TICKS || grabTarget.position().distanceToSqr(claws) < 0.6D)
+            {
+                LivingEntity target = grabTarget;
+                target.stopRiding();
+                target.startRiding(this, true); // canAddPassenger admits it while grabTarget == target
+                grabTarget = null;
+            }
+        }
+        // a carried mob is let go the moment the bird lands or its rider gets off
+        if (isHoldingMob() && (onGround() || !isFlying() || !canBeControlledByRider())) releaseHeld();
+    }
+
     public boolean isServer()
     {
         return !level().isClientSide;
@@ -441,6 +587,7 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
             }
 
             tickDive();
+            tickGrab();
 
             if (!isFlying() || onGround())
             {
@@ -1158,11 +1305,17 @@ public class ArgenEntity extends TamableAnimal implements Saddleable, FlyingAnim
      * For vehicles, the first passenger is generally considered the controller and "drives" the vehicle. For example,
      * Pigs, Horses, and Boats are generally "steered" by the controlling passenger.
      */
+    // Only a player can ever be the driver. This used to be "the first passenger", so if the rider got off in
+    // mid-air while a mob was being carried, the mob became first in the list and was treated as the driver. The
+    // carried mob is never a player, so it can never take the controls whatever order the passengers are in.
     @Override
     public LivingEntity getControllingPassenger()
     {
-        List<Entity> list = getPassengers();
-        return !list.isEmpty() && list.get(0) instanceof LivingEntity livingEntity ? livingEntity : null;
+        for (Entity passenger : getPassengers())
+        {
+            if (passenger instanceof Player player) return player;
+        }
+        return null;
     }
 
     public void setRidingPlayer(Player player)

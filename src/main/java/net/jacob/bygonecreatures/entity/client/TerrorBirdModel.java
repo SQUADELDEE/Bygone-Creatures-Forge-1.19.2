@@ -34,5 +34,25 @@ public class TerrorBirdModel extends GeoModel<TerrorBirdEntity> {
             head_rotation.setRotX(entityData.headPitch() * ((float) Math.PI / 180F));
             head_rotation.setRotY(entityData.netHeadYaw() * ((float) Math.PI / 180F));
         });
+
+        // The run clip doesn't touch the neck, and GeckoLib leaves a bone at whatever it was last set to - so a
+        // peck cut off mid-swing, or an idle sway, would otherwise leave the neck stuck in that pose for the whole
+        // run. While running (and not pecking, when the peck clip owns the neck) hold the walk's neutral pose.
+        // Assigned, not added to, so it's safe however many times this runs (GeckoLib negates X from Bedrock clips).
+        if ((entity.isRunning() || entity.hasControllingPassenger()) && entity.getAttackTick() <= 0) {
+            getBone("neckbone").ifPresent(bone -> {
+                bone.setRotX(-15.0F * ((float) Math.PI / 180F));
+                bone.setRotY(0.0F);
+                bone.setRotZ(0.0F);
+                bone.setPosX(0.0F);
+                bone.setPosY(0.0F);
+                bone.setPosZ(0.0F);
+            });
+            getBone("neck").ifPresent(bone -> {
+                bone.setRotX(0.0F);
+                bone.setRotY(0.0F);
+                bone.setRotZ(0.0F);
+            });
+        }
     }
 }

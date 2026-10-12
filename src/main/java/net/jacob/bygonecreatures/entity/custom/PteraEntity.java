@@ -78,6 +78,19 @@ public class PteraEntity extends PathfinderMob implements GeoEntity {
     private Vec3 lastWaterPos;         // last place we were over open water: where to head when stranded over land
 
     float diveSpeed;                   // read by PteraMoveControl while diving
+
+    // Each bird sways side to side (roll) and weaves very slightly (yaw) on its own slow, randomly-pitched rhythm -
+    // its own period, phase and size, plus a quicker second wobble on top - so a flock never moves in lockstep.
+    // Purely visual and client-side: rolled per instance in the constructor (each client picks its own, which is
+    // fine, nothing here is synced or saved). bankScale eases to 0 during a dive (it should be streamlined) and
+    // up a little while gliding (wide lazy banking).
+    private final float bankAmplitude;
+    private final float bankPeriod;
+    private final float bankPhase;
+    private final float bankPhase2;
+    private final float weavePhase;
+    private float bankScale = 1.0F;
+    private float bankScaleOld = 1.0F;
     private boolean hunting;
     private int huntCooldown;
     private int huntDelay;
@@ -87,6 +100,11 @@ public class PteraEntity extends PathfinderMob implements GeoEntity {
 
     public PteraEntity(EntityType<? extends PteraEntity> type, Level level) {
         super(type, level);
+        this.bankAmplitude = 7.0F + this.random.nextFloat() * 9.0F;      // degrees, 7-16
+        this.bankPeriod = 90.0F + this.random.nextFloat() * 110.0F;      // ticks, 4.5-10 seconds
+        this.bankPhase = this.random.nextFloat() * Mth.TWO_PI;
+        this.bankPhase2 = this.random.nextFloat() * Mth.TWO_PI;
+        this.weavePhase = this.random.nextFloat() * Mth.TWO_PI;
         this.moveControl = new PteraMoveControl(this);
         this.setNoGravity(true);
         this.huntCooldown = 100 + this.random.nextInt(300); // don't all dive the moment they spawn
@@ -248,10 +266,29 @@ public class PteraEntity extends PathfinderMob implements GeoEntity {
         calculateEntityAnimation(true);
     }
 
+    // Side-to-side tilt in degrees for this frame.
+    public float getFlightRoll(float partialTick) {
+        float t = tickCount + partialTick;
+        float scale = Mth.lerp(partialTick, bankScaleOld, bankScale) * (isGliding() ? 1.4F : 1.0F);
+        float sway = Mth.sin(Mth.TWO_PI * t / bankPeriod + bankPhase)
+                + 0.35F * Mth.sin(Mth.TWO_PI * t / (bankPeriod * 0.43F) + bankPhase2);
+        return sway * bankAmplitude * scale;
+    }
+
+    // A few degrees of heading weave, out of step with the roll.
+    public float getFlightYawWobble(float partialTick) {
+        float t = tickCount + partialTick;
+        return 3.0F * Mth.sin(Mth.TWO_PI * t / (bankPeriod * 0.7F) + weavePhase) * Mth.lerp(partialTick, bankScaleOld, bankScale);
+    }
+
     @Override
     public void tick() {
         super.tick();
-        if (level().isClientSide) return;
+        if (level().isClientSide) {
+            bankScaleOld = bankScale;
+            bankScale += ((isDiving() ? 0.0F : 1.0F) - bankScale) * 0.15F;
+            return;
+        }
 
         setNoGravity(!isDeadOrDying());
         if (huntCooldown > 0) huntCooldown--;

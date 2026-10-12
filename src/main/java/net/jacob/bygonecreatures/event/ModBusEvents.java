@@ -82,6 +82,7 @@ public class ModBusEvents {
         public static void registerGuiOverlays(RegisterGuiOverlaysEvent event) {
             event.registerAbove(VanillaGuiOverlay.HOTBAR.id(), "argen_dive_hint", new ArgenDiveHud());
             event.registerAbove(VanillaGuiOverlay.HOTBAR.id(), "bear_ability_hint", new BearAbilityHud());
+            event.registerAbove(VanillaGuiOverlay.HOTBAR.id(), "terrorbird_ability_hint", new TerrorBirdAbilityHud());
         }
 
         @SubscribeEvent

@@ -20,6 +20,8 @@ import net.minecraft.world.DifficultyInstance;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -144,7 +146,7 @@ public class DiplocaulusEntity extends Animal implements GeoEntity, Bucketable {
     }
 
     public static AttributeSupplier.Builder createAttributes() {
-        return Mob.createMobAttributes().add(Attributes.MAX_HEALTH, 7.0D).add(Attributes.MOVEMENT_SPEED, 0.18D).add(Attributes.ATTACK_DAMAGE, 3.0D);
+        return Mob.createMobAttributes().add(Attributes.MAX_HEALTH, 10.5D).add(Attributes.MOVEMENT_SPEED, 0.18D).add(Attributes.ATTACK_DAMAGE, 3.0D);
     }
 
     public static boolean checkDiplocaulusSpawnRules(EntityType<DiplocaulusEntity> type, LevelAccessor level, MobSpawnType spawnType, BlockPos pos, RandomSource random) {
@@ -216,9 +218,53 @@ public class DiplocaulusEntity extends Animal implements GeoEntity, Bucketable {
         return this.random.nextInt(3, 7);
     }
 
+    // ---- Defensive nausea cloud ----
+    // Hurt by something: lets out a cloud of noxious gas where it stands that makes everything inside it sick
+    // (nausea), for a few seconds. Once every ~10 seconds. A hand-rolled cloud rather than an AreaEffectCloud,
+    // which would also nauseate its own source (and other diplocaulus) - this skips its own kind.
+    private static final int NAUSEA_COOLDOWN_TICKS = 200;
+    private static final int NAUSEA_CLOUD_TICKS = 100;
+    private static final double NAUSEA_RADIUS = 3.0D;
+    private static final int NAUSEA_EFFECT_TICKS = 200;
+    private int nauseaCooldown;
+    private int nauseaCloudTicks;
+    private Vec3 nauseaCenter = Vec3.ZERO;
+
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        boolean hurt = super.hurt(source, amount);
+        if (hurt && !this.level().isClientSide && this.isAlive() && this.nauseaCooldown <= 0 && source.getEntity() != null) {
+            this.nauseaCooldown = NAUSEA_COOLDOWN_TICKS;
+            this.nauseaCloudTicks = NAUSEA_CLOUD_TICKS;
+            this.nauseaCenter = this.position().add(0.0D, 0.3D, 0.0D);
+            this.playSound(net.minecraft.sounds.SoundEvents.PUFFER_FISH_BLOW_OUT, 1.0F, 0.6F);
+        }
+        return hurt;
+    }
+
+    private void tickNauseaCloud() {
+        if (this.nauseaCooldown > 0) --this.nauseaCooldown;
+        if (this.nauseaCloudTicks <= 0 || !(this.level() instanceof ServerLevel server)) return;
+        --this.nauseaCloudTicks;
+
+        // shrinks away over its life
+        double life = this.nauseaCloudTicks / (double) NAUSEA_CLOUD_TICKS;
+        double radius = NAUSEA_RADIUS * (0.4D + 0.6D * life);
+        server.sendParticles(ParticleTypes.SNEEZE, this.nauseaCenter.x, this.nauseaCenter.y + 0.3D, this.nauseaCenter.z,
+                8, radius * 0.5D, 0.3D, radius * 0.5D, 0.01D);
+
+        if (this.nauseaCloudTicks % 10 == 0) {
+            for (LivingEntity target : server.getEntitiesOfClass(LivingEntity.class, new net.minecraft.world.phys.AABB(this.nauseaCenter, this.nauseaCenter).inflate(radius, 1.5D, radius),
+                    e -> e != this && !(e instanceof DiplocaulusEntity) && e.isAlive() && e.position().distanceToSqr(this.nauseaCenter) <= radius * radius + 2.0D)) {
+                target.addEffect(new MobEffectInstance(MobEffects.CONFUSION, NAUSEA_EFFECT_TICKS, 0), this);
+            }
+        }
+    }
+
     @Override
     public void baseTick() {
         super.baseTick();
+        if (!this.level().isClientSide) this.tickNauseaCloud();
         if (this.getLastHurtMob() != null) {
             if (this.tickCount - this.getLastHurtMobTimestamp() > 100) {
                 this.setLastHurtMob(null);

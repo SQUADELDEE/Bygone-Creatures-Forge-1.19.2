@@ -6,7 +6,7 @@
   "spawners": {
     "type": "bygonecreatures:protoceratops",
     "weight": 1,
-    "minCount": 1,
-    "maxCount": 2
+    "minCount": 6,
+    "maxCount": 10
   }
 }
